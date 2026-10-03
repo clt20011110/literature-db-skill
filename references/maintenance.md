@@ -2,6 +2,8 @@
 
 Run from the skill root, or use an absolute `tools/litdb.py` path. Add `--home <directory>` to select another database.
 
+For venue registration and first-time collection, see [扩增 venue 指南](expand-venues.md). The `--strict` registry check below targets the original 107-venue configuration; custom additions require structural validation or an explicitly updated source baseline.
+
 ```bash
 python3 tools/litdb.py registry validate --strict
 python3 tools/litdb.py bootstrap plan --venue tcad

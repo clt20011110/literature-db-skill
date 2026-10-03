@@ -1,5 +1,7 @@
 # Venue playbooks
 
+To collect another venue or extend coverage, follow the [扩增 venue 指南](expand-venues.md), then create or update its playbook using the [template](venues/template.md).
+
 - [aaai](venues/aaai.md)
 - [asp-dac](venues/asp-dac.md)
 - [dac](venues/dac.md)

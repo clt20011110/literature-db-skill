@@ -58,7 +58,9 @@ python3 tools/litdb.py search stop
 
 初始数据集覆盖 22 个 venue。配置 registry 有 107 个候选 venue，不表示这些 venue 全部已经收录。当前字段覆盖见 [数据库快照统计](references/catalog-snapshot.md)。详细采集方式见 [venue 索引](references/venue-index.md)、[采集/增量模式](references/modes.md)、[维护命令](references/maintenance.md)。当前发行包是历史采集快照，各 venue 的实际年份、水位和缺失字段以数据库/manifest 为准。
 
-更新流程：读取对应手册和已有水位 → 枚举官方新增年份/期次 → 提取并保存字段来源 → 校验 staging → 单写入者事务合并 → reconciliation → 更新水位 → `search index`。公开稳定 HTML/API 可由脚本采集；动态页面和登录依赖页面使用正常授权浏览器。遇到访问限制保存断点，不绕过限制。
+更新流程：读取对应手册和已有水位 → 枚举官方新增年份/期次 → 提取并保存字段来源 → 校验 staging → 单写入者事务合并（同时写入数据库水位）→ reconciliation 通过后确认完成 → `search index`。公开稳定 HTML/API 可由脚本采集；动态页面和登录依赖页面使用正常授权浏览器。遇到访问限制保存断点，不绕过限制。
+
+需要收录更多期刊/会议时，按 [扩增 venue 指南](references/expand-venues.md) 操作：包含可直接交给 Codex 的任务示例、已有候选与全新 venue 的不同步骤、registry 限制、采集文件格式、合并命令和完成标准。
 
 历史原始网页、浏览器会话、机器路径和临时任务文件不在发行包内。匿名的 `legacy-evidence://` 引用用于保留来源关系，不能当作可直接打开的文件或新鲜网络证据。论文摘要等内容的权利仍属于各自权利人；本仓库不包含论文 PDF 全文。
 
