@@ -1,0 +1,16 @@
+{
+  "format_version": 1,
+  "release_version": "v1.0.0",
+  "archive": {
+    "name": "literature-db-v1.0.0.tar.gz",
+    "size_bytes": 426975808,
+    "sha256": "70bc9f2d988ead2a3c35ac88f0c9953a742f0b60bd5dfbf806e003d576949073",
+    "parts": [
+      {
+        "name": "literature-db-v1.0.0.tar.gz",
+        "size_bytes": 426975808,
+        "sha256": "70bc9f2d988ead2a3c35ac88f0c9953a742f0b60bd5dfbf806e003d576949073"
+      }
+    ]
+  }
+}

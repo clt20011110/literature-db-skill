@@ -8,7 +8,7 @@
 
 ## 安装
 
-需要 Python 3.10+、Node.js 22+、npm 和 Git。当前运行平台为 macOS/Linux；搜索引擎使用本地 native 扩展，Windows 尚未验证。Python 运行时使用标准库。
+需要 Python 3.10+、Node.js 22+、npm 和 Git。当前支持 macOS/Linux；搜索服务使用 POSIX 文件锁，Windows 原生环境暂不支持。Python 运行时使用标准库。
 
 将仓库克隆为 Codex 的一个 skill：
 

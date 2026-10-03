@@ -1,0 +1,100 @@
+{
+  "format_version": 1,
+  "release_version": "v1.0.0",
+  "database": {
+    "filename": "catalog.sqlite",
+    "size_bytes": 3422666752,
+    "sha256": "a6d909696dd8ea8754f0a5da042975986b01d1d176d1c89467ca26d7f0e2f6fe"
+  },
+  "release_archive": {
+    "name": "literature-db-v1.0.0.tar.gz",
+    "size_bytes": 426975808,
+    "sha256": "70bc9f2d988ead2a3c35ac88f0c9953a742f0b60bd5dfbf806e003d576949073",
+    "parts": [
+      {
+        "name": "literature-db-v1.0.0.tar.gz",
+        "size_bytes": 426975808,
+        "sha256": "70bc9f2d988ead2a3c35ac88f0c9953a742f0b60bd5dfbf806e003d576949073"
+      }
+    ]
+  },
+  "entities": {
+    "tables": {
+      "auth_task": 0,
+      "browser_page_observation": 0,
+      "canonical_work": 127256,
+      "crawl_recipe": 0,
+      "drift_event": 0,
+      "field_provenance": 1599838,
+      "merge_event": 22,
+      "recipe_run": 0,
+      "repair_task": 57606,
+      "schema_meta": 1,
+      "source_item": 141038,
+      "source_item_field": 3478793,
+      "thread_run": 2,
+      "update_watermark": 22,
+      "venue": 22,
+      "venue_state": 22,
+      "venue_year_baseline": 0,
+      "venue_year_coverage": 251,
+      "waiver": 0,
+      "work_identifier": 211358,
+      "work_location": 255077,
+      "work_version": 127257
+    },
+    "source_tables_match_bundled": true,
+    "source_entity_digest_sha256": "cb603d9e959feea5e40ed69e12f934c9c21cb3341765ff7fdda8db57cc663603",
+    "bundled_entity_digest_sha256": "bfed8426d8ccc79c084b2b25b64d2a1d016fb72f5b6d47e2bb5263b05a21b852",
+    "core_fields": {
+      "fields": [
+        "canonical_key",
+        "title",
+        "authors",
+        "abstract",
+        "doi",
+        "publication_year",
+        "venue_id",
+        "document_type",
+        "primary_source_item_id"
+      ],
+      "source_sha256": "7eb72b571c1689dbb0b4cd5d6f9707a61061ee8dc70296376af0eac893472c7b",
+      "bundled_sha256": "7eb72b571c1689dbb0b4cd5d6f9707a61061ee8dc70296376af0eac893472c7b",
+      "unchanged": true
+    }
+  },
+  "privacy": {
+    "transform_counts_by_category": {
+      "internal-request": 155084,
+      "internal-thread": 183737,
+      "omitted-local-artifact": 231626
+    },
+    "changed_rows_by_table": {
+      "field_provenance": 31000,
+      "merge_event": 22,
+      "repair_task": 57606,
+      "source_item": 88240,
+      "source_item_field": 28681,
+      "thread_run": 2,
+      "venue": 4,
+      "venue_state": 22
+    },
+    "credential_pattern_hits": 0,
+    "preserved_academic_session_fields": [
+      "session_code",
+      "scope_session"
+    ]
+  },
+  "maintenance_assets": {
+    "included_counts": {
+      "registry": 114,
+      "recipe_config": 87,
+      "expected_manifest": 192,
+      "campaign_state": 1
+    },
+    "excluded_counts": {
+      "recipe_file": 639
+    },
+    "selected_file_count": 394
+  }
+}
