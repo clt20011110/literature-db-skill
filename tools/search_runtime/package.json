@@ -1,0 +1,15 @@
+{
+  "name": "litdb-search-runtime",
+  "private": true,
+  "type": "module",
+  "description": "Pinned local zvec-grep runtime for the literature catalog",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "postinstall": "node patch-zvec.mjs"
+  },
+  "dependencies": {
+    "@zvec/zvec-grep": "0.2.2"
+  }
+}

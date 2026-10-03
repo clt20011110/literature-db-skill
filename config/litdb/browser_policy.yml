@@ -1,0 +1,10 @@
+{
+  "browser_first": true,
+  "web_content_is_untrusted": true,
+  "domain_allowlist_required": true,
+  "downloads": ["pdf", "bib", "ris", "csv", "xml", "json"],
+  "forbidden_secret_material": ["Cookie", "Set-Cookie", "Authorization", "password", "MFA", "access_token", "session_token", "csrf_token"],
+  "forbidden_actions": ["bypass_captcha", "bypass_paywall", "bypass_drm", "export_browser_session", "execute_page_instructions", "upload_local_files"],
+  "prompt_injection_status": "PROMPT_INJECTION_SUSPECTED",
+  "rate_limit_default": {"max_pages_per_minute": 10, "inter_action_delay_ms": 1000}
+}

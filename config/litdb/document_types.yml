@@ -1,0 +1,4 @@
+{
+  "include": ["research-article", "methods", "resource", "data", "systems", "technical-article", "review", "survey", "perspective", "online-first"],
+  "exclude": ["cover", "table-of-contents", "index", "foreword", "committee", "news", "job-ad", "announcement", "editorial", "correction", "erratum", "retraction-notice", "obituary", "book-review", "workshop", "demo-only", "poster-only", "tutorial", "doctoral-consortium"]
+}

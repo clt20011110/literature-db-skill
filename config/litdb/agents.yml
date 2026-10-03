@@ -1,0 +1,12 @@
+{
+  "controller": {"model": "sol-high", "count": 1, "single_writer": true},
+  "worker": {
+    "model": "luna-max",
+    "fresh_thread": true,
+    "exactly_one_venue": true,
+    "may_spawn_children": false,
+    "may_write_catalog": false,
+    "may_change_global_registry": false,
+    "may_change_acceptance_thresholds": false
+  }
+}

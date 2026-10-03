@@ -1,0 +1,21 @@
+[
+  {"id":"cell","canonical_name":"Cell","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":1974,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"molecular-cell","canonical_name":"Molecular Cell","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":1997,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"cell-metabolism","canonical_name":"Cell Metabolism","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":2005,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"cell-systems","canonical_name":"Cell Systems","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":2015,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"cell-chemical-biology","canonical_name":"Cell Chemical Biology","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":1994,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"developmental-cell","canonical_name":"Developmental Cell","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":2001,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"cancer-cell","canonical_name":"Cancer Cell","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":2002,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"immunity","canonical_name":"Immunity","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":1994,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"neuron","canonical_name":"Neuron","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":1988,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"current-biology","canonical_name":"Current Biology","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":1991,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"cell-host-microbe","canonical_name":"Cell Host & Microbe","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":2007,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"cell-stem-cell","canonical_name":"Cell Stem Cell","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":2007,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"chem","canonical_name":"Chem","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":2016,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"joule","canonical_name":"Joule","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":2017,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"matter","canonical_name":"Matter","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":2019,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"med","canonical_name":"Med","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":2020,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"patterns","canonical_name":"Patterns","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":2020,"publisher_family":"cell-press","allowed_domains":["cell.com"]},
+  {"id":"cell-reports","canonical_name":"Cell Reports","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":2012,"publisher_family":"cell-press","allowed_domains":["cell.com"],"calendar_model":"continuous"},
+  {"id":"cell-reports-methods","canonical_name":"Cell Reports Methods","venue_type":"journal","profiles":["cell-bio-chem-core"],"active_from":2021,"publisher_family":"cell-press","allowed_domains":["cell.com"],"calendar_model":"continuous"}
+]

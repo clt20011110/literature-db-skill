@@ -1,0 +1,25 @@
+{
+  "status": "PASS",
+  "observed_at": "2026-08-20T00:00:00Z",
+  "browser": "Codex In-app Browser",
+  "browser_type": "iab",
+  "test_pages": [
+    "https://example.com/",
+    "https://www.iana.org/help/example-domains",
+    "https://www.iana.org/domains/reserved"
+  ],
+  "capabilities": [
+    "navigate",
+    "read_url",
+    "read_title",
+    "read_dom",
+    "semantic_click",
+    "scroll",
+    "screenshot"
+  ],
+  "semantic_click_navigation_verified": true,
+  "screenshot_bytes": 15146,
+  "browser_profile_session_supported": true,
+  "credentials_or_session_material_accessed": false,
+  "required_api_keys": 0
+}

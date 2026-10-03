@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4f7f7">
+    <title>本地文献检索工作台</title>
+    <link rel="stylesheet" href="./style.css">
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="page-width header-inner">
+        <a class="brand" href="./" aria-label="本地文献检索工作台首页">
+          <span class="brand-mark" aria-hidden="true">⌁</span>
+          <span>
+            <span class="brand-name">LitDB</span>
+            <span class="brand-caption">本地文献检索工作台</span>
+          </span>
+        </a>
+        <span class="header-note">面向研究想法的快速检索</span>
+      </div>
+    </header>
+
+    <main class="page-width workspace">
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow">LOCAL LITERATURE WORKBENCH</p>
+        <h1 id="page-title">从一个研究想法，找到相关论文</h1>
+        <p class="intro-copy">
+          用中文、英文或混合语言描述你的研究主题、问题或假设。检索结果来自本地文献索引，按标题和摘要寻找相关论文。
+        </p>
+        <div class="example-row" aria-label="示例检索主题">
+          <span class="example-label">试试：</span>
+          <button class="example-chip" type="button" data-example="low energy reliable network on chip communication">低功耗片上网络</button>
+          <button class="example-chip" type="button" data-example="graph neural network VLSI chip placement wirelength congestion EDA">GNN 电路布局</button>
+          <button class="example-chip" type="button" data-example="privacy preserving federated learning differential privacy">联邦学习隐私保护</button>
+        </div>
+      </section>
+
+      <section class="search-panel" aria-labelledby="search-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">SEARCH</p>
+            <h2 id="search-title">描述你的研究主题</h2>
+          </div>
+          <span class="input-language">支持中文 · English</span>
+        </div>
+
+        <form id="search-form" novalidate>
+          <div class="query-label-row">
+            <label for="query">研究主题或 idea</label>
+            <span id="query-count" class="character-count">0 / 2000</span>
+          </div>
+          <textarea id="query" name="query" rows="5" maxlength="2000" spellcheck="false" placeholder="例如：我想用图神经网络优化芯片布局，在降低线长的同时控制拥塞和功耗……" aria-describedby="query-help query-error" required></textarea>
+          <p id="query-help" class="field-help">论文摘要主要为英文，加入核心英文术语通常更准确。也可以把中文 idea 发给助手，由助手拆解检索并筛选。按 ⌘/Ctrl + Enter 提交。</p>
+          <p id="query-error" class="field-error" role="alert" hidden></p>
+
+          <div class="control-grid">
+            <div class="control-group">
+              <label for="mode">检索模式</label>
+              <select id="mode" name="mode">
+                <option value="hybrid">混合检索 · 推荐</option>
+                <option value="semantic">语义检索</option>
+                <option value="keyword">关键词检索</option>
+              </select>
+            </div>
+            <div class="control-group">
+              <label for="limit">返回条数</label>
+              <select id="limit" name="limit">
+                <option value="10">10 篇</option>
+                <option value="20" selected>20 篇</option>
+                <option value="30">30 篇</option>
+                <option value="50">50 篇</option>
+              </select>
+            </div>
+            <div class="control-group year-group">
+              <label for="year-from">发表年份</label>
+              <div class="year-inputs">
+                <input id="year-from" name="year_from" type="number" inputmode="numeric" min="1900" max="2200" placeholder="起始">
+                <span aria-hidden="true">—</span>
+                <input id="year-to" name="year_to" type="number" inputmode="numeric" min="1900" max="2200" placeholder="结束">
+              </div>
+            </div>
+            <div class="control-group venue-field">
+              <div class="venue-label-row">
+                <label>会场筛选</label>
+                <span id="venue-count" class="selected-count">全部会场</span>
+              </div>
+              <div id="venue-options" class="venue-options" role="group" aria-label="会场筛选选项">
+                <span class="venue-loading">正在读取会场列表…</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button id="search-button" class="primary-button" type="submit">
+              <span class="button-label">搜索文献</span>
+              <span class="button-arrow" aria-hidden="true">→</span>
+            </button>
+            <p class="form-note">检索只访问当前服务提供的本地索引。</p>
+          </div>
+        </form>
+      </section>
+
+      <section id="backend-status" class="backend-status" data-state="loading" aria-labelledby="backend-status-title">
+        <div class="status-indicator" aria-hidden="true"><span></span></div>
+        <div class="status-copy">
+          <p id="backend-status-title" class="status-title">正在连接本地索引</p>
+          <p id="backend-status-detail" class="status-detail">读取索引状态…</p>
+        </div>
+        <div class="status-meta">
+          <span id="status-model"></span>
+          <span id="status-updated"></span>
+        </div>
+      </section>
+
+      <section class="results-section" aria-labelledby="results-heading">
+        <div class="results-toolbar">
+          <div>
+            <p class="eyebrow">RESULTS</p>
+            <h2 id="results-heading">等待输入研究主题</h2>
+          </div>
+          <p id="result-summary" class="result-summary" hidden></p>
+        </div>
+        <div id="search-feedback" class="feedback" role="status" aria-live="polite" hidden></div>
+        <div id="export-toolbar" class="export-toolbar" hidden>
+          <label class="select-all-option" for="select-all-results">
+            <input id="select-all-results" type="checkbox">
+            <span>全选当前结果</span>
+          </label>
+          <p id="export-selection-count" class="export-selection-count">已选 0 篇 · 当前展示 0 篇</p>
+          <div class="export-actions">
+            <label class="visually-hidden" for="export-format">导出格式</label>
+            <select id="export-format">
+              <option value="csv">CSV</option>
+              <option value="json">JSON</option>
+              <option value="bibtex">BibTeX</option>
+              <option value="ris">RIS</option>
+            </select>
+            <button id="export-selected-button" class="secondary-button" type="button" disabled>导出所选</button>
+            <button id="export-current-button" class="primary-button export-current-button" type="button" disabled>导出当前展示</button>
+          </div>
+        </div>
+        <div id="results" class="results-list" aria-live="polite" aria-busy="false">
+          <div class="initial-state">
+            <span class="initial-icon" aria-hidden="true">⌕</span>
+            <h3>你的检索结果会显示在这里</h3>
+            <p>先输入一个研究主题，结果卡片会保留论文信息、摘要摘录与原文链接。</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="page-width">LitDB · 本地研究资料索引</div>
+    </footer>
+
+    <noscript>
+      <div class="noscript-banner">此页面需要启用 JavaScript 才能检索本地文献。</div>
+    </noscript>
+  </body>
+</html>

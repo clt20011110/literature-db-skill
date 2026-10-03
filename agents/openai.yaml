@@ -1,0 +1,4 @@
+interface:
+  display_name: "Literature DB"
+  short_description: "Local paper search and official-source metadata collection"
+  default_prompt: "Use $literature-db to search my local paper catalog or update a venue from its official sources."

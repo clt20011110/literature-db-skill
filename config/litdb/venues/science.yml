@@ -1,0 +1,8 @@
+[
+  {"id":"science","canonical_name":"Science","venue_type":"journal","profiles":["science-core"],"active_from":1880,"publisher_family":"science-family","allowed_domains":["science.org"]},
+  {"id":"science-advances","canonical_name":"Science Advances","venue_type":"journal","profiles":["science-core"],"active_from":2015,"publisher_family":"science-family","allowed_domains":["science.org"],"calendar_model":"continuous"},
+  {"id":"science-translational-medicine","canonical_name":"Science Translational Medicine","venue_type":"journal","profiles":["science-core"],"active_from":2009,"publisher_family":"science-family","allowed_domains":["science.org"]},
+  {"id":"science-immunology","canonical_name":"Science Immunology","venue_type":"journal","profiles":["science-core"],"active_from":2016,"publisher_family":"science-family","allowed_domains":["science.org"]},
+  {"id":"science-robotics","canonical_name":"Science Robotics","venue_type":"journal","profiles":["science-core"],"active_from":2016,"publisher_family":"science-family","allowed_domains":["science.org"]},
+  {"id":"science-signaling","canonical_name":"Science Signaling","venue_type":"journal","profiles":["science-core"],"active_from":2008,"publisher_family":"science-family","allowed_domains":["science.org"]}
+]

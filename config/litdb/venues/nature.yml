@@ -1,0 +1,21 @@
+[
+  {"id":"nature","canonical_name":"Nature","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":1869,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-communications","canonical_name":"Nature Communications","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":2010,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"],"calendar_model":"continuous"},
+  {"id":"nature-methods","canonical_name":"Nature Methods","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":2004,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-chemistry","canonical_name":"Nature Chemistry","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":2009,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-chemical-biology","canonical_name":"Nature Chemical Biology","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":2005,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-catalysis","canonical_name":"Nature Catalysis","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":2018,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-synthesis","canonical_name":"Nature Synthesis","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":2022,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-biotechnology","canonical_name":"Nature Biotechnology","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":1983,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-biomedical-engineering","canonical_name":"Nature Biomedical Engineering","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":2017,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-medicine","canonical_name":"Nature Medicine","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":1995,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-genetics","canonical_name":"Nature Genetics","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":1992,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-immunology","canonical_name":"Nature Immunology","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":2000,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-microbiology","canonical_name":"Nature Microbiology","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":2016,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-neuroscience","canonical_name":"Nature Neuroscience","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":1998,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-metabolism","canonical_name":"Nature Metabolism","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":2019,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-structural-molecular-biology","canonical_name":"Nature Structural & Molecular Biology","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":1994,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-cell-biology","canonical_name":"Nature Cell Biology","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":1999,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-machine-intelligence","canonical_name":"Nature Machine Intelligence","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":2019,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]},
+  {"id":"nature-computational-science","canonical_name":"Nature Computational Science","venue_type":"journal","profiles":["nature-bio-chem-core"],"active_from":2021,"publisher_family":"nature-portfolio","allowed_domains":["nature.com"]}
+]

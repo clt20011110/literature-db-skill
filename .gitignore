@@ -1,0 +1,17 @@
+# Runtime and full database release assets
+/data/literature-db/
+/dist/
+/archive/
+/.local/
+**/node_modules/
+__pycache__/
+*.py[cod]
+.DS_Store
+*.sqlite
+*.sqlite-*
+*.db
+*.log
+.env
+.env.*
+*.pem
+*.key

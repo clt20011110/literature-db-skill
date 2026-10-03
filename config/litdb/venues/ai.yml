@@ -1,0 +1,474 @@
+[
+  {
+    "id": "neurips",
+    "canonical_name": "Conference on Neural Information Processing Systems",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1987,
+    "publisher_family": "neurips-proceedings",
+    "allowed_domains": [
+      "neurips.cc",
+      "papers.nips.cc"
+    ]
+  },
+  {
+    "id": "icml",
+    "canonical_name": "International Conference on Machine Learning",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1980,
+    "publisher_family": "pmlr",
+    "allowed_domains": [
+      "icml.cc",
+      "proceedings.mlr.press"
+    ],
+    "allowed_path_prefixes": {
+      "raw.githubusercontent.com": [
+        "/mlresearch/v235/",
+        "/mlresearch/v267/"
+      ]
+    }
+  },
+  {
+    "id": "iclr",
+    "canonical_name": "International Conference on Learning Representations",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 2013,
+    "publisher_family": "openreview",
+    "allowed_domains": [
+      "iclr.cc",
+      "openreview.net"
+    ]
+  },
+  {
+    "id": "aaai",
+    "canonical_name": "AAAI Conference on Artificial Intelligence",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1980,
+    "publisher_family": "aaai-dl",
+    "allowed_domains": [
+      "aaai.org",
+      "ojs.aaai.org"
+    ]
+  },
+  {
+    "id": "ijcai",
+    "canonical_name": "International Joint Conference on Artificial Intelligence",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1969,
+    "publisher_family": "ijcai-proceedings",
+    "allowed_domains": [
+      "ijcai.org"
+    ]
+  },
+  {
+    "id": "aistats",
+    "canonical_name": "International Conference on Artificial Intelligence and Statistics",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1985,
+    "publisher_family": "pmlr",
+    "allowed_domains": [
+      "aistats.org",
+      "proceedings.mlr.press"
+    ]
+  },
+  {
+    "id": "uai",
+    "canonical_name": "Conference on Uncertainty in Artificial Intelligence",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1985,
+    "publisher_family": "pmlr",
+    "allowed_domains": [
+      "auai.org",
+      "proceedings.mlr.press"
+    ]
+  },
+  {
+    "id": "colt",
+    "canonical_name": "Conference on Learning Theory",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1988,
+    "publisher_family": "pmlr",
+    "allowed_domains": [
+      "learningtheory.org",
+      "proceedings.mlr.press"
+    ]
+  },
+  {
+    "id": "cvpr",
+    "canonical_name": "IEEE/CVF Conference on Computer Vision and Pattern Recognition",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1983,
+    "publisher_family": "cvf-open-access",
+    "allowed_domains": [
+      "cvpr.thecvf.com",
+      "openaccess.thecvf.com",
+      "ieeexplore.ieee.org"
+    ]
+  },
+  {
+    "id": "iccv",
+    "canonical_name": "IEEE/CVF International Conference on Computer Vision",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1987,
+    "publisher_family": "cvf-open-access",
+    "allowed_domains": [
+      "iccv.thecvf.com",
+      "openaccess.thecvf.com",
+      "ieeexplore.ieee.org"
+    ],
+    "conference_frequency": "biennial",
+    "calendar_model": "biennial_proceedings"
+  },
+  {
+    "id": "eccv",
+    "canonical_name": "European Conference on Computer Vision",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1990,
+    "publisher_family": "springer-link",
+    "allowed_domains": [
+      "eccv.ecva.net",
+      "ecva.net",
+      "link.springer.com"
+    ],
+    "conference_frequency": "biennial",
+    "calendar_model": "biennial_proceedings"
+  },
+  {
+    "id": "acl",
+    "canonical_name": "Annual Meeting of the Association for Computational Linguistics",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1963,
+    "publisher_family": "acl-anthology",
+    "allowed_domains": [
+      "aclweb.org",
+      "aclanthology.org"
+    ]
+  },
+  {
+    "id": "emnlp",
+    "canonical_name": "Conference on Empirical Methods in Natural Language Processing",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1996,
+    "publisher_family": "acl-anthology",
+    "allowed_domains": [
+      "aclweb.org",
+      "aclanthology.org"
+    ]
+  },
+  {
+    "id": "naacl",
+    "canonical_name": "North American Chapter of the Association for Computational Linguistics Conference",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 2000,
+    "publisher_family": "acl-anthology",
+    "allowed_domains": [
+      "aclweb.org",
+      "aclanthology.org"
+    ]
+  },
+  {
+    "id": "coling",
+    "canonical_name": "International Conference on Computational Linguistics",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1965,
+    "publisher_family": "acl-anthology",
+    "allowed_domains": [
+      "aclweb.org",
+      "aclanthology.org"
+    ],
+    "conference_frequency": "biennial",
+    "calendar_model": "biennial_proceedings"
+  },
+  {
+    "id": "eacl",
+    "canonical_name": "Conference of the European Chapter of the Association for Computational Linguistics",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1983,
+    "publisher_family": "acl-anthology",
+    "allowed_domains": [
+      "aclweb.org",
+      "aclanthology.org"
+    ]
+  },
+  {
+    "id": "kdd",
+    "canonical_name": "ACM SIGKDD Conference on Knowledge Discovery and Data Mining",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1995,
+    "publisher_family": "acm-dl",
+    "allowed_domains": [
+      "kdd.org",
+      "dl.acm.org"
+    ]
+  },
+  {
+    "id": "www",
+    "canonical_name": "The Web Conference",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1994,
+    "publisher_family": "acm-dl",
+    "allowed_domains": [
+      "thewebconf.org",
+      "dl.acm.org"
+    ]
+  },
+  {
+    "id": "sigir",
+    "canonical_name": "ACM SIGIR Conference on Research and Development in Information Retrieval",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1978,
+    "publisher_family": "acm-dl",
+    "allowed_domains": [
+      "sigir.org",
+      "dl.acm.org"
+    ]
+  },
+  {
+    "id": "wsdm",
+    "canonical_name": "ACM International Conference on Web Search and Data Mining",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 2008,
+    "publisher_family": "acm-dl",
+    "allowed_domains": [
+      "wsdm-conference.org",
+      "dl.acm.org"
+    ]
+  },
+  {
+    "id": "cikm",
+    "canonical_name": "ACM International Conference on Information and Knowledge Management",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1992,
+    "publisher_family": "acm-dl",
+    "allowed_domains": [
+      "cikmconference.org",
+      "dl.acm.org"
+    ]
+  },
+  {
+    "id": "corl",
+    "canonical_name": "Conference on Robot Learning",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 2017,
+    "publisher_family": "pmlr",
+    "allowed_domains": [
+      "corl.org",
+      "proceedings.mlr.press"
+    ]
+  },
+  {
+    "id": "rss",
+    "canonical_name": "Robotics: Science and Systems",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 2005,
+    "publisher_family": "rss-foundation",
+    "allowed_domains": [
+      "roboticsproceedings.org",
+      "roboticsconference.org"
+    ]
+  },
+  {
+    "id": "icra",
+    "canonical_name": "IEEE International Conference on Robotics and Automation",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1984,
+    "publisher_family": "ieee-xplore",
+    "allowed_domains": [
+      "ieee-icra.org",
+      "ieeexplore.ieee.org"
+    ]
+  },
+  {
+    "id": "iros",
+    "canonical_name": "IEEE/RSJ International Conference on Intelligent Robots and Systems",
+    "venue_type": "conference",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1988,
+    "publisher_family": "ieee-xplore",
+    "allowed_domains": [
+      "ieee-iros.org",
+      "ieeexplore.ieee.org"
+    ]
+  },
+  {
+    "id": "jmlr",
+    "canonical_name": "Journal of Machine Learning Research",
+    "venue_type": "journal",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 2000,
+    "publisher_family": "jmlr-family",
+    "allowed_domains": [
+      "jmlr.org"
+    ],
+    "calendar_model": "continuous"
+  },
+  {
+    "id": "tmlr",
+    "canonical_name": "Transactions on Machine Learning Research",
+    "venue_type": "journal",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 2022,
+    "publisher_family": "openreview",
+    "allowed_domains": [
+      "jmlr.org",
+      "openreview.net"
+    ],
+    "calendar_model": "continuous"
+  },
+  {
+    "id": "tpami",
+    "canonical_name": "IEEE Transactions on Pattern Analysis and Machine Intelligence",
+    "venue_type": "journal",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1979,
+    "publisher_family": "ieee-xplore",
+    "allowed_domains": [
+      "ieeexplore.ieee.org"
+    ]
+  },
+  {
+    "id": "tnnls",
+    "canonical_name": "IEEE Transactions on Neural Networks and Learning Systems",
+    "venue_type": "journal",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 2012,
+    "publisher_family": "ieee-xplore",
+    "allowed_domains": [
+      "ieeexplore.ieee.org"
+    ]
+  },
+  {
+    "id": "artificial-intelligence",
+    "canonical_name": "Artificial Intelligence",
+    "venue_type": "journal",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1970,
+    "publisher_family": "elsevier-sciencedirect",
+    "allowed_domains": [
+      "sciencedirect.com"
+    ]
+  },
+  {
+    "id": "jair",
+    "canonical_name": "Journal of Artificial Intelligence Research",
+    "venue_type": "journal",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1993,
+    "publisher_family": "jair",
+    "allowed_domains": [
+      "jair.org"
+    ],
+    "calendar_model": "continuous"
+  },
+  {
+    "id": "machine-learning",
+    "canonical_name": "Machine Learning",
+    "venue_type": "journal",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1986,
+    "publisher_family": "springer-link",
+    "allowed_domains": [
+      "link.springer.com"
+    ]
+  },
+  {
+    "id": "ijcv",
+    "canonical_name": "International Journal of Computer Vision",
+    "venue_type": "journal",
+    "profiles": [
+      "ai-core"
+    ],
+    "active_from": 1987,
+    "publisher_family": "springer-link",
+    "allowed_domains": [
+      "link.springer.com"
+    ]
+  }
+]

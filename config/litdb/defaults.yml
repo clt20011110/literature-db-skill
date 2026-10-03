@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "acceptance": "browser-v2",
+  "crawl_from": "2015-01-01",
+  "through": "current",
+  "browser_first": true,
+  "required_api_keys": 0,
+  "max_active_venues": 1,
+  "max_active_workers_per_domain": 1,
+  "overlap_days": 14,
+  "full_reconcile_interval_days": 30
+}
