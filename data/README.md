@@ -23,6 +23,8 @@ When the release is a single archive, this direct form also works:
 python3 scripts/install_database.py --archive dist/literature-db-v1.0.0.tar.gz
 ```
 
+If Python's configured OpenSSL CA file is missing, the installer can use an installed standard system CA bundle; explicit `SSL_CERT_FILE` and `SSL_CERT_DIR` settings are honored, and TLS verification stays enabled.
+
 The installer defaults to `data/literature-db`. It refuses to replace a
 non-empty destination; use `--force` only when replacing that destination is
 intended.

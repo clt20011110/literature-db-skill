@@ -4,11 +4,15 @@ import contextlib
 import hashlib
 import io
 import json
+import os
 import sqlite3
+import ssl
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -132,6 +136,33 @@ class DatabaseBundleTests(unittest.TestCase):
             installer._write_parts_to_archive(parts, combined, root, None)
             self.assertEqual(combined.read_bytes(), b"first-second")
             self.assertEqual(builder.sha256_file(combined), hashlib.sha256(b"first-second").hexdigest())
+
+    def test_https_context_uses_standard_ca_when_openssl_default_is_missing(self) -> None:
+        if not any(path.is_file() for path in installer.SYSTEM_CA_BUNDLE_PATHS):
+            self.skipTest("no standard system CA bundle is installed on this host")
+        with tempfile.TemporaryDirectory() as temp_name:
+            empty_capath = Path(temp_name) / "empty-openssl-certs"
+            empty_capath.mkdir()
+            missing_defaults = SimpleNamespace(cafile="/missing/openssl/cert.pem", capath=str(empty_capath))
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(
+                installer.ssl, "get_default_verify_paths", return_value=missing_defaults
+            ):
+                context = installer._verified_https_context()
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
+        self.assertTrue(context.get_ca_certs())
+
+    def test_https_context_preserves_explicit_ssl_certificate_environment(self) -> None:
+        for variable in ("SSL_CERT_FILE", "SSL_CERT_DIR"):
+            with self.subTest(variable=variable):
+                context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                with mock.patch.dict(os.environ, {variable: "/user-configured/custom-roots"}, clear=True):
+                    with mock.patch.object(installer.ssl, "create_default_context", return_value=context) as create_context:
+                        with mock.patch.object(installer.ssl, "get_default_verify_paths") as get_defaults:
+                            result = installer._verified_https_context()
+                self.assertIs(result, context)
+                create_context.assert_called_once_with()
+                get_defaults.assert_not_called()
 
     def test_full_bundle_preserves_core_and_restores_safely(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:

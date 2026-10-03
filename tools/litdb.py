@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stable command-line entry point for ARIS LitDB."""
+"""Stable command-line entry point for Literature DB."""
 
 from __future__ import annotations
 

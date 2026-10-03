@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import sqlite3
+import ssl
 import sys
 import tarfile
 import tempfile
@@ -24,6 +25,27 @@ from bundle_database import BundleError, _json_bytes, _pk_order, _quote_identifi
 
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 MAX_BUNDLE_MANIFEST_BYTES = 64 * 1024 * 1024
+CA_HASH_ENTRY_RE = re.compile(r"^[0-9a-fA-F]{8}\.[0-9]+$")
+SYSTEM_CA_BUNDLE_PATHS = (
+    Path("/etc/ssl/cert.pem"),  # macOS and BSD
+    Path("/etc/ssl/certs/ca-certificates.crt"),  # Debian and Ubuntu
+    Path("/etc/pki/tls/certs/ca-bundle.crt"),  # RHEL and Fedora
+    Path("/etc/ssl/certs/ca-bundle.crt"),  # openSUSE
+    Path("/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"),  # RHEL-family
+    Path("/usr/local/share/certs/ca-root-nss.crt"),  # FreeBSD
+)
+
+
+def _has_hashed_ca_entries(directory: Path) -> bool:
+    """Check that an OpenSSL CApath contains at least one usable hashed entry."""
+    try:
+        with os.scandir(directory) as entries:
+            return any(
+                CA_HASH_ENTRY_RE.fullmatch(entry.name) and entry.is_file()
+                for entry in entries
+            )
+    except OSError:
+        return False
 
 
 def _safe_asset_name(value: Any) -> str:
@@ -74,8 +96,37 @@ def _validate_release_manifest(manifest: Any) -> None:
 
 def _download(url: str, destination: Path) -> None:
     request = urllib.request.Request(url, headers={"User-Agent": "literature-db-skill-installer/1"})
-    with urllib.request.urlopen(request, timeout=60) as response, destination.open("wb") as output:
+    with urllib.request.urlopen(request, timeout=60, context=_verified_https_context()) as response, destination.open("wb") as output:
         shutil.copyfileobj(response, output, length=1024 * 1024)
+
+
+def _verified_https_context() -> ssl.SSLContext:
+    """Build a verified TLS context, using a standard CA file if OpenSSL's default is missing.
+
+    Explicit SSL_CERT_FILE/SSL_CERT_DIR settings are left entirely to Python/OpenSSL.
+    The fallback only selects a CA bundle installed by the operating system; it never
+    downloads certificates or disables certificate/hostname verification.
+    """
+    if "SSL_CERT_FILE" in os.environ or "SSL_CERT_DIR" in os.environ:
+        return ssl.create_default_context()
+
+    defaults = ssl.get_default_verify_paths()
+    default_file = getattr(defaults, "cafile", None)
+    if default_file and Path(default_file).is_file():
+        return ssl.create_default_context()
+    default_dir = getattr(defaults, "capath", None)
+    if default_dir and _has_hashed_ca_entries(Path(default_dir)):
+        return ssl.create_default_context()
+
+    for candidate in SYSTEM_CA_BUNDLE_PATHS:
+        if candidate.is_file():
+            return ssl.create_default_context(cafile=str(candidate))
+
+    raise BundleError(
+        "no trusted system CA bundle was found and OpenSSL's configured CA path is missing; "
+        "install your operating system's CA certificates or set SSL_CERT_FILE/SSL_CERT_DIR. "
+        "TLS certificate verification remains enabled."
+    )
 
 
 def _write_parts_to_archive(
