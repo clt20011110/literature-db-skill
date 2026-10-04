@@ -319,6 +319,7 @@ def build_index(paths: LitDBPaths, *, model=DEFAULT_MODEL, rebuild=False) -> dic
 
 VENUE_LABELS = {
     'iclr':'ICLR','icml':'ICML','neurips':'NeurIPS','aaai':'AAAI','ijcai':'IJCAI',
+    'cvpr':'CVPR','iccv':'ICCV','eccv':'ECCV','acl':'ACL',
     'asp-dac':'ASP-DAC','iscas':'ISCAS','dac':'DAC','date':'DATE','iccad':'ICCAD',
     'iccd':'ICCD','tcad':'TCAD','tvlsi':'TVLSI','todaes':'TODAES','jetc':'JETC',
     'trets':'TRETS','ieee-design-test':'IEEE Design & Test',

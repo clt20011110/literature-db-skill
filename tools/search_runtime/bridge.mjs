@@ -29,6 +29,8 @@ try {
       let result;
       if (request.op === 'index') {
         result = await engine.index({
+          // A copied index may still name its previous corpus directory.
+          rootPaths: [root],
           includePaths: ['papers'], globs: ['**/*.txt'],
           rebuild: Boolean(request.rebuild), embeddingConcurrency: 4, onProgress: progress,
         });

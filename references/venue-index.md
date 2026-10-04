@@ -3,12 +3,16 @@
 To collect another venue or extend coverage, follow the [扩增 venue 指南](expand-venues.md), then create or update its playbook using the [template](venues/template.md).
 
 - [aaai](venues/aaai.md)
+- [acl](venues/acl.md)
 - [asp-dac](venues/asp-dac.md)
+- [cvpr](venues/cvpr.md)
 - [dac](venues/dac.md)
 - [date](venues/date.md)
+- [eccv](venues/eccv.md)
 - [embedded-systems-letters](venues/embedded-systems-letters.md)
 - [iccad](venues/iccad.md)
 - [iccd](venues/iccd.md)
+- [iccv](venues/iccv.md)
 - [iclr](venues/iclr.md)
 - [icml](venues/icml.md)
 - [ieee-design-test](venues/ieee-design-test.md)
@@ -26,4 +30,4 @@ To collect another venue or extend coverage, follow the [扩增 venue 指南](ex
 - [trets](venues/trets.md)
 - [tvlsi](venues/tvlsi.md)
 
-There are 22 collected venues and one retired venue playbook. Registry entries without a playbook require official-source discovery before collection.
+There are 26 venue playbooks and one retired venue playbook. A playbook documents the collection method; completed years and field coverage are established by the database and reconciliation receipts. Registry entries without a playbook require official-source discovery before collection.

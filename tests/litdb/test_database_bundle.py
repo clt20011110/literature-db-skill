@@ -33,7 +33,7 @@ def _write_source_home(home: Path) -> None:
     )
     canonical = {
         "canonical_key": "doi:10.1234/example",
-        "title": "A scholarly example",
+        "title": "COOKIE: Contrastive Cross-Modal Knowledge Sharing Pre-Training for Vision-Language Representation",
         "authors": ["A. Researcher"],
         "abstract": r"The domain is g:\\mathbb{R}^d and the source route is https://example.org/TMP/Users/.",
         "doi": "10.1234/example",
@@ -80,6 +80,18 @@ def _write_source_home(home: Path) -> None:
 
 
 class DatabaseBundleTests(unittest.TestCase):
+    def test_cookie_acronym_title_is_preserved_but_cookie_headers_are_scrubbed(self) -> None:
+        title = "COOKIE: Contrastive Cross-Modal Knowledge Sharing Pre-Training for Vision-Language Representation"
+        sanitizer = builder.PrivacySanitizer()
+        self.assertEqual(sanitizer.scrub_text(title, "canonical_work", "title"), title)
+        self.assertEqual(sanitizer.secret_pattern_hits, 0)
+        for header in ("Cookie: session=private-value", "Set-Cookie: session=private-value; HttpOnly", "HTTP/1.1 200 OK\r\nSet-Cookie: session=; Max-Age=0"):
+            with self.subTest(header=header):
+                safe = sanitizer.scrub_text(header, "source_item", "response_headers")
+                self.assertTrue(safe.startswith("legacy-evidence://redacted-credential/"))
+        explicit = sanitizer.scrub_value({"cookie": "private-value"}, "source_item", "payload_json")
+        self.assertTrue(explicit["cookie"].startswith("legacy-evidence://redacted-credential/"))
+
     def test_sanitizer_preserves_scholarly_routes_latex_and_session_codes(self) -> None:
         sanitizer = builder.PrivacySanitizer()
         academic = r"See g:\\mathbb{R}^d and https://example.org/TMP/Users/."

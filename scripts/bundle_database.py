@@ -52,7 +52,8 @@ LOCAL_PATH_RE = re.compile(
 )
 SECRET_VALUE_RE = re.compile(
     r"(?im)(?:^|[\r\n])\s*(?:authorization|proxy-authorization)\s*:\s*(?:basic|bearer)\s+\S+|"
-    r"(?:^|[\r\n])\s*(?:cookie|set-cookie)\s*:\s*\S+|"
+    # Require a cookie name/value pair; a paper title can begin with "COOKIE:".
+    r"(?:^|[\r\n])\s*(?:cookie|set-cookie)\s*:\s*[!#$%&'*+.^_`|~0-9A-Za-z-]+\s*=|"
     r"(?:client_secret|access_token|refresh_token|api_key|api_token)\s*[:=]\s*\S+"
 )
 UUID_RE = re.compile(r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")

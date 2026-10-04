@@ -2,7 +2,8 @@
 
 一个独立的 Codex 文献 skill：按期刊/会议采集和增量更新官方元数据，在本地检索标题与摘要，并导出检索结果。无需 ARIS 或 API key。
 
-- **127,256 篇论文，22 个已收录期刊/会议**；完整 SQLite 数据库作为 GitHub Release 数据包发布，保留来源记录和字段 provenance。
+- **177,031 篇论文，26 个已收录期刊/会议**；完整 SQLite 数据库随 GitHub Release `v1.1.0` 发布，保留来源记录和字段 provenance。
+- `v1.1.0` 在 `v1.0.0` 的 127,256 篇/22 个 venue 基线上新增 CVPR 21,482 篇、ICCV 8,691 篇、ECCV 9,416 篇和 ACL 10,186 篇；`v1.0.1` 仅修复安装器。扩增收录元数据和实际观察到的 PDF 链接，没有下载论文 PDF；缺失字段保留来源说明。
 - **一个 venue 一份采集手册**，统一入口是 [`SKILL.md`](SKILL.md)。入口、分页、收录范围、字段/PDF 规则和历史异常在 [`references/venues/`](references/venues/) 中维护。
 - 本地工作台提供关键词、语义、混合检索，支持 venue/年份筛选；可导出所选或当前展示结果为 **CSV、JSON、BibTeX、RIS**。
 
@@ -56,7 +57,7 @@ python3 tools/litdb.py search stop
 
 默认数据库目录相对于 skill 自身解析，从任意工作目录使用绝对脚本路径也有效。优先级为 `--home` > `LITDB_HOME` > `<skill-root>/data/literature-db`。搜索只读源 catalog，派生 lookup、文本、向量、模型和日志写入 `<db-home>/search/`。
 
-初始数据集覆盖 22 个 venue。配置 registry 有 107 个候选 venue，不表示这些 venue 全部已经收录。当前字段覆盖见 [数据库快照统计](references/catalog-snapshot.md)。详细采集方式见 [venue 索引](references/venue-index.md)、[采集/增量模式](references/modes.md)、[维护命令](references/maintenance.md)。当前发行包是历史采集快照，各 venue 的实际年份、水位和缺失字段以数据库/manifest 为准。
+当前 `v1.1.0` 数据集覆盖 26 个 venue。配置 registry 有 107 个候选 venue，不表示这些 venue 全部已经收录。当前字段覆盖见 [数据库快照统计](references/catalog-snapshot.md)。详细采集方式见 [venue 索引](references/venue-index.md)、[采集/增量模式](references/modes.md)、[维护命令](references/maintenance.md)。发行包是冻结的数据快照，各 venue 的实际年份、水位和缺失字段以数据库/manifest 为准。
 
 更新流程：读取对应手册和已有水位 → 枚举官方新增年份/期次 → 提取并保存字段来源 → 校验 staging → 单写入者事务合并（同时写入数据库水位）→ reconciliation 通过后确认完成 → `search index`。公开稳定 HTML/API 可由脚本采集；动态页面和登录依赖页面使用正常授权浏览器。遇到访问限制保存断点，不绕过限制。
 

@@ -162,6 +162,11 @@
       "ecva.net",
       "link.springer.com"
     ],
+    "allowed_path_prefixes": {
+      "media.eventhosts.cc": [
+        "/Conferences/ECCV2026/pdfs/"
+      ]
+    },
     "conference_frequency": "biennial",
     "calendar_model": "biennial_proceedings"
   },
@@ -177,7 +182,15 @@
     "allowed_domains": [
       "aclweb.org",
       "aclanthology.org"
-    ]
+    ],
+    "allowed_path_prefixes": {
+      "github.com": [
+        "/acl-org/acl-anthology/"
+      ],
+      "raw.githubusercontent.com": [
+        "/acl-org/acl-anthology/"
+      ]
+    }
   },
   {
     "id": "emnlp",
