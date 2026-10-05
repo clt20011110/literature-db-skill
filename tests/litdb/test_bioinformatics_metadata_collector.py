@@ -148,6 +148,37 @@ class BioinformaticsCaptureTests(unittest.TestCase):
             with self.subTest(conflicting_europe_pmc_type=conflict):
                 self.assertIsNone(_europe_pmc_scope_fallback_type(["review-article", conflict]))
 
+    def test_exact_publisher_notice_committee_and_award_profile_titles_override_generic_research_type(self) -> None:
+        titles = (
+            ("ISMB/ECCB 2017 PROCEEDINGS PAPERS COMMITTEE", "front_matter"),
+            ("ISMB 2018 PROCEEDINGS PAPERS COMMITTEE", "front_matter"),
+            ("ISMB/ECCB 2019 Proceedings Papers Committee", "front_matter"),
+            ("2022 ISCB Overton Prize: Po-Ru Loh", "society_information"),
+            ("2023 Outstanding Contributions to ISCB Award: Shoba Ranganathan", "society_information"),
+            ("The 2024 ISCB Accomplishments by a Senior Scientist Award—Dr Tandy Warnow", "society_information"),
+            ("The 2025 ISCB Innovator Award—Dr Fabian Theis", "society_information"),
+            ("The 2026 ISCB Outstanding Service Award—Dr Philip E. Bourne", "society_information"),
+            ("2019 Outstanding Contributions to ISCB Awarded to Barb Bryant", "society_information"),
+            ("ISCB Honors 2021 Award Recipients Peer Bork, Barbara Engelhardt, Ben Raphael, Teresa Attwood", "society_information"),
+            ("Retracted: DeepCRISTL: deep transfer learning to predict CRISPR/Cas9 functional and endogenous on-target editing efficiency", "retraction"),
+            ("Publisher’s Note: ‘Expression of Concern: Cleavage-Stage Embryo Segmentation Using SAM-Based Dual Branch Pipeline’", "expression_of_concern"),
+        )
+        for title, reason in titles:
+            for source_type in ("research-article", "Journal Article", "Awards Papers"):
+                with self.subTest(title=title, source_type=source_type):
+                    self.assertEqual(classify_scope(source_type, title), ("exclude", reason))
+        for title in (
+            "A committee learning method for protein prediction",
+            "Analysis of the ISMB 2018 proceedings papers committee network",
+            "An ISCB award-winning method for genome assembly",
+            "Retracted sequence alignment using graph models",
+            "Publisher note detection in scholarly text corpora",
+        ):
+            with self.subTest(research_title=title):
+                self.assertEqual(classify_scope("Original Paper", title), ("include", None))
+        self.assertEqual(classify_scope("Awards Papers", "An efficient sequence alignment algorithm"), ("unresolved", None))
+        self.assertEqual(classify_scope("ISCB/ISMB 2022", "ISMB 2022 proceedings"), ("unresolved", None))
+
     def test_eccb_conference_parent_includes_research_and_preserves_child_exclusions(self) -> None:
         parent = "ECCB 2016: The 15th European Conference on Computational Biology"
         self.assertEqual(classify_scope(parent, "A research paper title"), ("include", None))

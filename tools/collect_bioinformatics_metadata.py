@@ -113,8 +113,25 @@ EXCLUDED_TITLE_PREFIXES = (
     (re.compile(r"^(?:editorial|editorial note)\s*[:—-]", re.I), "editorial"),
     (re.compile(r"^(?:correction|corrigendum)\s+(?:to|for)\b", re.I), "correction"),
     (re.compile(r"^erratum\s*[:—-]", re.I), "erratum"),
-    (re.compile(r"^retraction\s*[:—-]", re.I), "retraction"),
+    (re.compile(r"^(?:retraction|retracted)\s*[:—–-]", re.I), "retraction"),
     (re.compile(r"^(?:table of contents|cover|obituary|author index)\s*$", re.I), "front_matter"),
+    (re.compile(r"^ismb(?:/eccb)?\s+(?:19|20)\d{2}\s+proceedings\s+papers\s+committee$", re.I), "front_matter"),
+    (re.compile(
+        r"^(?:the\s+)?(?:19|20)\d{2}\s+(?:"
+        r"iscb\s+(?:innovator\s+award|accomplishments\s+by\s+a\s+senior\s+scientist\s+award|"
+        r"overton\s+prize(?:\s+award)?|outstanding\s+service\s+award)|"
+        r"outstanding\s+contributions\s+to\s+iscb\s+award)\s*[:—–-]\s*\S.+$",
+        re.I,
+    ), "society_information"),
+    (re.compile(
+        r"^(?:19|20)\d{2}\s+outstanding\s+contributions\s+to\s+iscb\s+awarded\s+to\s+\S.+$|"
+        r"^iscb\s+honors\s+(?:19|20)\d{2}\s+award\s+recipients\s+\S.+$",
+        re.I,
+    ), "society_information"),
+    (re.compile(
+        r"^publisher[’']s\s+note:\s*[‘'\"“]?\s*expression\s+of\s+concern\s*:",
+        re.I,
+    ), "expression_of_concern"),
 )
 ISCB_MESSAGE_COMPONENT_RE = re.compile(r"message\s+from\s+(?:the\s+)?iscb", re.I)
 ISCB_EDITORIAL_RESPONSE_TITLE_RE = re.compile(
