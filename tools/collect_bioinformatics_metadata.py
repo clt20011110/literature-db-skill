@@ -16,9 +16,11 @@ Archive data contains year_links and issues. Issue/advance data contains
 items with landing_url/title/DOI and only the authors preview, citation,
 section, categories or paper-PDF link actually visible in that listing.
 Listing data may also carry observed pagination evidence: the visible next-page
-URL or an explicit observation that the page is terminal. For advance listings,
-the saved chain must start at the official entry URL and reach a captured
-terminal page; per-page completeness alone never closes the chain.
+URL or an explicit observation that the page is terminal. For issue listings,
+each issue route is an independent entry point whose saved chain must reach a
+captured terminal page; advance listings must start at the official entry URL
+and also reach a captured terminal page. Per-page completeness alone never
+closes either chain.
 Article data contains citation_* values, repeated ordered citation_authors,
 visible_publication_date, abstract text and an article document_type only when
 the page exposes it. The capture server stores no HTML, cookies, headers,
@@ -32,12 +34,18 @@ import hashlib
 import json
 import os
 import re
+import sys
 import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, unquote, urlencode, urlsplit, urlunsplit
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from tools.litdb.metadata_pipeline import ALLOWED_EXCLUSION_REASONS
 
 
 VENUE_ID = "bioinformatics"
@@ -50,6 +58,16 @@ CROSSREF_JOURNAL_PATH = "/journals/1367-4811/works"
 CAPTURE_SCHEMA = "bioinformatics-browser-capture-v1"
 STAGING_SCHEMA = "literature-metadata-staging-v1"
 EXCLUSION_SCHEMA = "literature-metadata-exclusion-v1"
+SCOPE_DECISION_SCHEMA = "bioinformatics-reviewed-scope-decisions-v1"
+SCOPE_DECISION_FINGERPRINT_METHOD = (
+    "sha256_exact_utf8_of_normalized_records_jsonl_abstract_field; null when absent or empty"
+)
+SCOPE_REVIEWED_INCLUSION_METHOD = "reviewed_exact_identity_title_and_abstract_scope"
+SCOPE_REVIEWED_EXCLUSION_METHOD = "reviewed_exact_identity_title_and_publication_type_scope"
+SCOPE_DECISION_REASON_CODES = {
+    "include_research": frozenset({"substantive_abstract_tool_or_study"}),
+    "exclude_nonresearch": frozenset(ALLOWED_EXCLUSION_REASONS),
+}
 ARCHIVE_URL = "https://academic.oup.com/bioinformatics/issue-archive"
 ADVANCE_URL = "https://academic.oup.com/bioinformatics/advance-articles"
 SCOPE_START = 2015
@@ -61,12 +79,14 @@ EXCLUDED_TYPE_REASONS = (
     (re.compile(r"\bcorrections?\b|\bcorrigen(?:dum|da)\b"), "correction"),
     (re.compile(r"\berrat(?:um|a)\b"), "erratum"),
     (re.compile(r"\bretract(?:ions?|ed)\b"), "retraction"),
+    (re.compile(r"^expression\s+of\s+concern$"), "expression_of_concern"),
     (re.compile(r"\bfront\s*matter\b|\bfrontmatter\b"), "front_matter"),
     (re.compile(r"\btable\s+of\s+contents\b"), "table_of_contents"),
     (re.compile(r"\bbook\s+review\b"), "book_review"),
     (re.compile(r"\bobituary\b"), "obituary"),
     (re.compile(r"\bannouncement\b"), "announcement"),
     (re.compile(r"^author\s+index$"), "front_matter"),
+    (re.compile(r"^eccb\s+(?:19|20)\d{2}\s+organization$"), "front_matter"),
     (re.compile(r"^letters?\s+to\s+(?:the\s+)?editor$"), "letter_to_editor"),
 )
 INCLUDED_TYPE_RE = re.compile(
@@ -78,7 +98,7 @@ INCLUDED_TYPE_RE = re.compile(
 EPMC_EXPLICIT_NONRESEARCH_TYPE_RE = re.compile(
     r"\b(editorials?|corrections?|corrigendum|corrigenda|errata|erratum|retractions?|"
     r"letters?|comments?|commentary|commentaries|news(?:\s+items?)?|front\s+matter|"
-    r"table\s+of\s+contents|book\s+reviews?|obituary|obituaries|announcements?)\b",
+    r"table\s+of\s+contents|book\s+reviews?|obituary|obituaries|announcements?|expression\s+of\s+concern)\b",
     re.I,
 )
 EPMC_SCOPE_FALLBACK_TYPES = {
@@ -89,11 +109,40 @@ EPMC_SCOPE_FALLBACK_TYPES = {
     "review",
 }
 EXCLUDED_TITLE_PREFIXES = (
+    (re.compile(r"^rebuttal\s+to\s+the\s+letter\s+to\s+the\s+editor\b", re.I), "letter_to_editor"),
     (re.compile(r"^(?:editorial|editorial note)\s*[:—-]", re.I), "editorial"),
     (re.compile(r"^(?:correction|corrigendum)\s+(?:to|for)\b", re.I), "correction"),
     (re.compile(r"^erratum\s*[:—-]", re.I), "erratum"),
     (re.compile(r"^retraction\s*[:—-]", re.I), "retraction"),
     (re.compile(r"^(?:table of contents|cover|obituary|author index)\s*$", re.I), "front_matter"),
+)
+ISCB_MESSAGE_COMPONENT_RE = re.compile(r"message\s+from\s+(?:the\s+)?iscb", re.I)
+ISCB_EDITORIAL_RESPONSE_TITLE_RE = re.compile(
+    r"\b(?:reaction|response)\s+to\b.{0,120}\beditorial\b|"
+    r"\beditorial\b.{0,80}\b(?:reaction|response)\b",
+    re.I,
+)
+ISCB_AWARD_COMPETITION_TITLE_RE = re.compile(
+    r"\b(?:awards?|prizes?)\b(?![-‐‑‒–—]\s*winning)|\bcompetition\b",
+    re.I,
+)
+ISCB_MEETING_REPORT_TITLE_RES = (
+    re.compile(r"\b(?:summary|highlights)\b.{0,160}\b(?:meeting|workshop|conference)\b", re.I),
+    re.compile(r"\b(?:meeting|workshop|conference)\b.{0,120}\b(?:summary|report|highlights)\b", re.I),
+    re.compile(r"\bconference\b.{0,80}\b(?:program(?:me)?|update|reboot(?:ed)?)\b", re.I),
+    re.compile(r"\bconference\b.{0,48}\b(?:19|20)\d{2}\b", re.I),
+    re.compile(
+        r"\b(?:\d+(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+annual\b"
+        r".{0,80}\bmeeting\b",
+        re.I,
+    ),
+)
+ECCB_CONFERENCE_PARENT_TYPE_RE = re.compile(
+    r"eccb\s+(?:19|20)\d{2}:\s*the\s+"
+    r"(?:\d+(?:st|nd|rd|th)|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|"
+    r"eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|"
+    r"nineteenth|twentieth)\s+european\s+conference\s+on\s+computational\s+biology",
+    re.I,
 )
 
 CAPTURE_FIELDS = {
@@ -366,6 +415,12 @@ def _load_europe_pmc_records(path: Path | None) -> list[dict[str, Any]]:
         pmid = _clean_string(row.get("pmid"), limit=100)
         doi = normalize_doi(row.get("doi"))
         publication_date, publication_date_precision = _epmc_date(row)
+        raw_abstract = row.get("abstract")
+        abstract_sha256 = (
+            hashlib.sha256(raw_abstract.encode("utf-8")).hexdigest()
+            if isinstance(raw_abstract, str) and raw_abstract != ""
+            else None
+        )
         records.append({
             "source_url": source_url,
             "observed_at": observed_at,
@@ -374,6 +429,7 @@ def _load_europe_pmc_records(path: Path | None) -> list[dict[str, Any]]:
             "title": _clean_string(row.get("title"), limit=2000),
             "authors": _epmc_authors(row),
             "abstract": _clean_string(row.get("abstract"), limit=100000),
+            "abstract_sha256": abstract_sha256,
             "publication_date": publication_date,
             "publication_date_precision": publication_date_precision,
             "issue_year": row.get("issue_year") if isinstance(row.get("issue_year"), int) else None,
@@ -392,6 +448,224 @@ def _load_europe_pmc_records(path: Path | None) -> list[dict[str, Any]]:
     return records
 
 
+def _load_scope_decisions(
+    path: Path | None,
+    evidence_root: Path,
+) -> tuple[dict[str, Any] | None, dict[str, tuple[dict[str, Any], dict[str, Any]]], list[dict[str, Any]]]:
+    """Load exact-identity reviewed scope decisions and preflight their shape."""
+    if path is None:
+        return None, {}, []
+    receipt_bytes = path.read_bytes()
+    document = json.loads(receipt_bytes.decode("utf-8"))
+    receipt_sha256 = hashlib.sha256(receipt_bytes).hexdigest()
+    if not isinstance(document, dict) or document.get("schema_version") != SCOPE_DECISION_SCHEMA:
+        raise ValueError("invalid reviewed scope decision schema")
+    review_source = document.get("review_source")
+    source_file = review_source.get("file") if isinstance(review_source, dict) else None
+    source_parts = source_file.split("/") if isinstance(source_file, str) else []
+    if (
+        not isinstance(review_source, dict)
+        or not isinstance(source_file, str)
+        or not source_file.strip()
+        or source_file.startswith("/")
+        or "\\" in source_file
+        or re.match(r"^[A-Za-z]:", source_file)
+        or any(part in {"", ".", ".."} for part in source_parts)
+        or not isinstance(review_source.get("sha256"), str)
+        or not re.fullmatch(r"[0-9a-f]{64}", review_source["sha256"])
+    ):
+        raise ValueError("reviewed scope decisions require an evidence-root-relative source file and SHA-256")
+    evidence_root_resolved = evidence_root.resolve(strict=True)
+    source_path = evidence_root_resolved.joinpath(*source_parts)
+    try:
+        source_path_resolved = source_path.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("reviewed scope source file is missing under evidence_root") from exc
+    try:
+        source_path_resolved.relative_to(evidence_root_resolved)
+    except ValueError as exc:
+        raise ValueError("reviewed scope source file escapes evidence_root") from exc
+    if not source_path_resolved.is_file():
+        raise ValueError("reviewed scope source file must be a regular file under evidence_root")
+    source_sha256 = hashlib.sha256(source_path_resolved.read_bytes()).hexdigest()
+    if source_sha256 != review_source["sha256"]:
+        raise ValueError("reviewed scope source file SHA-256 mismatch")
+    try:
+        reviewed_at = _iso_time(document.get("reviewed_at_utc"))
+    except ValueError as exc:
+        raise ValueError("reviewed scope decisions require an ISO-8601 review time") from exc
+    if document.get("abstract_fingerprint_method") != SCOPE_DECISION_FINGERPRINT_METHOD:
+        raise ValueError("unsupported reviewed scope abstract fingerprint method")
+    decisions = document.get("decisions")
+    if not isinstance(decisions, list):
+        raise ValueError("reviewed scope decisions require a decisions array")
+
+    reports: list[dict[str, Any]] = []
+    parsed_rows: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    id_counts: dict[str, int] = {}
+    for index, row in enumerate(decisions, 1):
+        errors: list[str] = []
+        if not isinstance(row, dict):
+            row = {}
+            errors.append("decision row must be an object")
+        source_id = row.get("source_native_id")
+        if isinstance(source_id, str):
+            id_counts[source_id] = id_counts.get(source_id, 0) + 1
+        else:
+            errors.append("source_native_id is required")
+        doi = row.get("doi")
+        if not isinstance(doi, str) or normalize_doi(doi) != doi:
+            errors.append("doi must be a normalized DOI")
+        title = row.get("title")
+        if not isinstance(title, str) or not title.strip():
+            errors.append("exact OUP title is required")
+        landing_url = row.get("landing_url")
+        clean_landing = clean_official_url(landing_url) if isinstance(landing_url, str) else None
+        if (
+            not isinstance(landing_url, str)
+            or clean_landing != landing_url
+            or not source_id
+            or article_native_id(landing_url or "") != source_id
+        ):
+            errors.append("landing_url must be the exact official article URL for source_native_id")
+        epmc = row.get("europe_pmc")
+        if not isinstance(epmc, dict):
+            epmc = {}
+            errors.append("europe_pmc binding is required")
+        epmc_url = epmc.get("source_url")
+        if not isinstance(epmc_url, str) or clean_europe_pmc_source_url(epmc_url) != epmc_url:
+            errors.append("Europe PMC source_url must be an exact allowlisted API URL")
+        try:
+            _iso_time(epmc.get("observed_at"))
+        except ValueError:
+            errors.append("Europe PMC observed_at is required")
+        abstract_sha256 = epmc.get("abstract_sha256")
+        if abstract_sha256 is not None and (
+            not isinstance(abstract_sha256, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", abstract_sha256)
+        ):
+            errors.append("Europe PMC abstract_sha256 must be null or a lowercase SHA-256")
+        publication_types = epmc.get("publication_types")
+        if (
+            not isinstance(publication_types, list)
+            or any(not isinstance(value, str) or not value.strip() for value in publication_types)
+        ):
+            errors.append("Europe PMC publication_types must be an ordered string array")
+        decision = row.get("decision")
+        reason_code = row.get("reason_code")
+        if not isinstance(decision, str) or decision not in SCOPE_DECISION_REASON_CODES:
+            errors.append("decision must be include_research or exclude_nonresearch")
+        elif not isinstance(reason_code, str) or reason_code not in SCOPE_DECISION_REASON_CODES[decision]:
+            errors.append("reason_code is not allowed for the reviewed decision")
+        reason = row.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            errors.append("a non-empty review reason is required")
+
+        report = {
+            "scope_decision_index": index,
+            "source_native_id": source_id,
+            "doi": doi,
+            "decision": decision,
+            "reason_code": reason_code,
+            "review_source": review_source["file"],
+            "review_source_sha256": review_source["sha256"],
+            "review_receipt_sha256": receipt_sha256,
+            "reviewed_at_utc": reviewed_at,
+            "status": "invalid" if errors else "pending",
+        }
+        if errors:
+            report["validation_errors"] = errors
+        reports.append(report)
+        parsed_rows.append((row, report))
+
+    for row, report in parsed_rows:
+        source_id = row.get("source_native_id")
+        if isinstance(source_id, str) and id_counts.get(source_id, 0) > 1:
+            report["status"] = "invalid"
+            report.setdefault("validation_errors", []).append("duplicate scope decision for source_native_id")
+
+    by_source_id = {
+        row["source_native_id"]: (row, report)
+        for row, report in parsed_rows
+        if isinstance(row.get("source_native_id"), str) and report["status"] == "pending"
+    }
+    loaded_document = {
+        **document,
+        "receipt_sha256": receipt_sha256,
+        "reviewed_at_utc": reviewed_at,
+        "review_source": review_source,
+    }
+    return loaded_document, by_source_id, reports
+
+
+def _scope_review_binding_errors(
+    row: dict[str, Any],
+    *,
+    source_native_id: str,
+    source_dois: list[str],
+    title: str | None,
+    landing_url: str,
+    supplement: dict[str, Any] | None,
+    supplement_matched_by: str | None,
+    supplement_match_error: str | None,
+) -> list[str]:
+    errors: list[str] = []
+    if row.get("source_native_id") != source_native_id:
+        errors.append("source_native_id binding mismatch")
+    if len(source_dois) != 1 or row.get("doi") != source_dois[0]:
+        errors.append("OUP DOI binding mismatch")
+    if row.get("title") != title:
+        errors.append("OUP title binding mismatch")
+    if row.get("landing_url") != landing_url:
+        errors.append("OUP landing URL binding mismatch")
+    epmc_binding = row.get("europe_pmc", {})
+    if (
+        not supplement
+        or supplement_match_error
+        or "doi" not in (supplement_matched_by or "")
+        or supplement.get("doi") != row.get("doi")
+    ):
+        errors.append("no selected exact DOI Europe PMC record")
+        return errors
+    if epmc_binding.get("source_url") != supplement.get("source_url"):
+        errors.append("Europe PMC source URL binding mismatch")
+    if epmc_binding.get("observed_at") != supplement.get("observed_at"):
+        errors.append("Europe PMC observation time binding mismatch")
+    if epmc_binding.get("abstract_sha256") != supplement.get("abstract_sha256"):
+        errors.append("Europe PMC abstract fingerprint mismatch")
+    if epmc_binding.get("publication_types") != supplement.get("publication_types"):
+        errors.append("Europe PMC publication_types binding mismatch")
+    if row.get("decision") == "include_research":
+        if not supplement.get("abstract") or not supplement.get("abstract_sha256"):
+            errors.append("reviewed research inclusion requires a non-empty exact-ID abstract")
+        if not supplement.get("publication_types"):
+            errors.append("reviewed research inclusion requires supplied Europe PMC publication_types")
+    return errors
+
+
+def _scope_review_evidence(document: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": document["schema_version"],
+        "review_receipt_sha256": document["receipt_sha256"],
+        "review_source": document["review_source"],
+        "reviewed_at_utc": document["reviewed_at_utc"],
+        "abstract_fingerprint_method": document["abstract_fingerprint_method"],
+        "method": (
+            SCOPE_REVIEWED_INCLUSION_METHOD
+            if row["decision"] == "include_research"
+            else SCOPE_REVIEWED_EXCLUSION_METHOD
+        ),
+        "decision": row["decision"],
+        "reason_code": row["reason_code"],
+        "reason": row["reason"],
+        "source_native_id": row["source_native_id"],
+        "doi": row["doi"],
+        "title": row["title"],
+        "landing_url": row["landing_url"],
+        "europe_pmc": row["europe_pmc"],
+    }
+
+
 def _europe_pmc_scope_fallback_type(publication_types: list[str]) -> str | None:
     """Return an original, explicit Europe PMC research type if it is unconflicted."""
     if any(
@@ -404,6 +678,26 @@ def _europe_pmc_scope_fallback_type(publication_types: list[str]) -> str | None:
         if normalize_space(value).casefold() in EPMC_SCOPE_FALLBACK_TYPES:
             return value
     return None
+
+
+def _europe_pmc_type_as_supplied(publication_types: list[str]) -> str | None:
+    """Select a supplied article-type label while preserving the full source list separately."""
+    article_type_labels = {
+        "journal article",
+        "introductory journal article",
+        "review",
+        "review article",
+        "review-article",
+        "research article",
+        "research-article",
+    }
+    for value in publication_types:
+        if normalize_space(value).casefold() in article_type_labels:
+            return value
+    for value in publication_types:
+        if not normalize_space(value).casefold().startswith("research support,"):
+            return value
+    return publication_types[0] if publication_types else None
 
 
 def _match_europe_pmc(
@@ -482,8 +776,28 @@ def _match_europe_pmc(
                 selected_pool = exact_title
                 selection_steps.append("exact normalized title")
             else:
-                audit["selection_rule"] = "duplicate exact identifiers without exact normalized title match"
-                return None, None, "exact_identifier_title_conflict", audit
+                # The observed GEM record uses an en dash in OUP and an ASCII
+                # hyphen in Europe PMC. This narrow typography fallback also
+                # requires the exact DOI, volume and issue, and a unique hit.
+                dash_title = _normalized_match_title(title).replace("\u2013", "-")
+                typography_matches = [
+                    row for row in selected_pool
+                    if doi and volume and issue and row.get("doi") == doi
+                    and _normalized_match_title(row.get("title")).replace("\u2013", "-") == dash_title
+                    and normalize_space(str(row.get("volume") or "")).casefold() == normalize_space(str(volume)).casefold()
+                    and normalize_space(str(row.get("issue") or "")).casefold() == normalize_space(str(issue)).casefold()
+                ]
+                if len(typography_matches) != 1:
+                    audit["selection_rule"] = "duplicate exact identifiers without exact normalized title match"
+                    return None, None, "exact_identifier_title_conflict", audit
+                selected_pool = typography_matches
+                audit["title_match_count"] = 1
+                audit["metadata_discrepancies"].append({
+                    "field": "title", "oup_value": title,
+                    "europe_pmc_value": selected_pool[0].get("title"),
+                    "resolution": "en_dash_equals_ascii_hyphen_with_exact_DOI_volume_issue",
+                })
+                selection_steps.append("unique title after en-dash normalization with exact DOI/volume/issue")
 
         if volume:
             volume_matches = [row for row in selected_pool if row.get("volume") and normalize_space(str(row["volume"])).casefold() == normalize_space(str(volume)).casefold()]
@@ -1039,7 +1353,10 @@ def _load_captures(pages_index: Path, evidence_root: Path) -> list[dict[str, Any
     return captures
 
 
-def _archive_issue_map(captures: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
+def _archive_issue_map(
+    captures: list[dict[str, Any]],
+    issue_captures: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     issues: dict[str, dict[str, Any]] = {}
     year_links: list[dict[str, Any]] = []
     for capture in captures:
@@ -1051,9 +1368,61 @@ def _archive_issue_map(captures: list[dict[str, Any]]) -> tuple[dict[str, dict[s
                 issue_path = urlsplit(entry["url"]).path
                 prior = issues.get(issue_path)
                 current = {**entry, "source_url": capture["source_url"], "observed_at": capture["observed_at"]}
-                if prior and (prior["year"], prior["volume"], prior["issue"]) != (current["year"], current["volume"], current["issue"]):
+                if prior and (prior["volume"], prior["issue"]) != (current["volume"], current["issue"]):
                     raise ValueError("archive contains conflicting identities for one issue URL")
-                issues[issue_path] = current
+                if prior:
+                    prior.setdefault("archive_occurrences", []).append(current)
+                else:
+                    issues[issue_path] = {**current, "archive_occurrences": [current]}
+
+    # Archive year is retained as an occurrence fact. When a complete issue
+    # page is available, its observed heading supplies the canonical issue
+    # year; archive pages can link the same issue from adjacent-year lists.
+    issue_identity_by_path: dict[str, tuple[tuple[int, str, str], dict[str, Any]]] = {}
+    for capture in issue_captures or []:
+        if not capture.get("complete"):
+            continue
+        source = urlsplit(capture["source_url"])
+        route = re.fullmatch(
+            r"/bioinformatics/issue/([0-9]+)/([0-9]+(?:-[0-9]+)?|Supplement_[0-9]+)",
+            source.path,
+        )
+        data = capture["data"]
+        year = data.get("year")
+        volume = data.get("volume")
+        issue = data.get("issue")
+        if route is None:
+            raise ValueError("complete issue capture URL does not identify an official issue")
+        if route.group(1) != str(volume) or route.group(2) != str(issue):
+            raise ValueError("complete issue page heading does not match its official issue URL")
+        if not isinstance(year, int):
+            raise ValueError("complete issue page is missing its observed issue year")
+        prior_identity = issue_identity_by_path.get(source.path)
+        identity = (year, str(volume), str(issue))
+        if prior_identity and prior_identity[0] != identity:
+            raise ValueError("complete issue captures contain conflicting identities for one issue URL")
+        issue_identity_by_path[source.path] = (identity, capture)
+
+    for path, issue in issues.items():
+        occurrences = issue["archive_occurrences"]
+        occurrence_years = {row["year"] for row in occurrences if isinstance(row.get("year"), int)}
+        captured = issue_identity_by_path.get(path)
+        if captured:
+            (year, volume, issue_label), capture = captured
+            if (str(issue["volume"]), str(issue["issue"])) != (volume, issue_label):
+                raise ValueError("archive and complete issue page identities conflict for one issue URL")
+            issue.update({
+                "year": year,
+                "volume": volume,
+                "issue": issue_label,
+                "identity_source_url": capture["source_url"],
+                "identity_observed_at": capture["observed_at"],
+                "identity_method": "official_issue_page_heading",
+            })
+        elif len(occurrence_years) == 1:
+            issue["year"] = next(iter(occurrence_years))
+        else:
+            issue["year"] = None
     return issues, year_links
 
 
@@ -1189,6 +1558,23 @@ def _listing_chain_state(
             elif not prior or capture["observed_at"] > prior["observed_at"]:
                 by_url[source_url] = capture
 
+        if page_type == "issue":
+            issue_identities = {
+                (
+                    capture["data"].get("year"),
+                    capture["data"].get("volume"),
+                    capture["data"].get("issue"),
+                )
+                for capture in by_url.values()
+            }
+            if len(issue_identities) > 1:
+                blockers.append({
+                    "kind": "pagination_issue_identity_conflict",
+                    "page_type": page_type,
+                    "source_url": entry_url or urlunsplit(("https", OUP_HOST, path, "", "")),
+                })
+                all_paths_complete = False
+
         has_navigation_evidence = any(
             capture["data"].get("pagination") is not None or bool(urlsplit(capture["source_url"]).query)
             for capture in pages
@@ -1240,6 +1626,10 @@ def _listing_chain_state(
                     blockers.append({"kind": "pagination_next_terminal_state_missing", "page_type": page_type, "source_url": current_url, "next_page_url": next_url})
                     all_paths_complete = False
                     break
+                if urlsplit(next_url).path != path:
+                    blockers.append({"kind": "pagination_page_outside_entry_scope", "page_type": page_type, "source_url": current_url, "next_page_url": next_url})
+                    all_paths_complete = False
+                    break
                 current_url = next_url
                 continue
             if terminal is True:
@@ -1268,7 +1658,9 @@ def _archive_directory_state(
 
     Some OUP annual archive pages list every issue/supplement directly. Others
     may expose volume links first; only then is a complete linked volume
-    directory required. The evidence model must follow the visible page shape.
+    directory required. A complete issue-page dropdown may supplement a direct
+    annual list only when its own issue page is one of that list's observed
+    anchors and the page, volume, and issue identities agree.
     """
     blockers: list[dict[str, Any]] = []
     archive_path = urlsplit(ARCHIVE_URL).path
@@ -1282,20 +1674,51 @@ def _archive_directory_state(
         for capture, directory in directories
         if directory.get("kind") == "year_index" and urlsplit(capture["source_url"]).path == archive_path
     ]
-    if not any(
+    year_index_complete = any(
         directory.get("complete") is True
         and not directory.get("invalid_evidence")
         and capture.get("complete") is True
         for capture, directory in year_indexes
-    ):
+    )
+    if not year_index_complete:
         blockers.append({"kind": "archive_directory_year_index_not_attested_complete", "source_url": ARCHIVE_URL})
 
     year_links_by_year: dict[int, set[str]] = {}
     for link in year_links:
         if isinstance(link.get("year"), int) and link.get("url"):
             year_links_by_year.setdefault(link["year"], set()).add(link["url"])
+    linked_annual_issue_rows_by_path: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    if year_index_complete:
+        for linked_year in sorted(target_years):
+            linked_urls = year_links_by_year.get(linked_year, set())
+            if len(linked_urls) != 1:
+                continue
+            annual_directories = [
+                (capture, directory)
+                for capture, directory in directories
+                if directory.get("kind") == "year"
+                and directory.get("year") == linked_year
+                and directory.get("complete") is True
+                and not directory.get("invalid_evidence")
+                and capture.get("complete") is True
+                and directory.get("entry_url", capture["source_url"]) in linked_urls
+            ]
+            for capture, _directory in annual_directories:
+                for row in capture["data"].get("issues", []):
+                    row_url = urlsplit(row.get("url", ""))
+                    route = re.fullmatch(
+                        r"/bioinformatics/issue/([0-9]+)/([0-9]+(?:-[0-9]+)?|Supplement_[0-9]+)",
+                        row_url.path,
+                    )
+                    if (
+                        route is not None
+                        and not row_url.query
+                        and row.get("year") == linked_year
+                        and str(row.get("volume")) == route.group(1)
+                        and str(row.get("issue")) == route.group(2)
+                    ):
+                        linked_annual_issue_rows_by_path.setdefault(row_url.path, []).append((linked_year, row))
     year_directories: dict[int, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
-    referenced_volumes: set[tuple[int, str, str]] = set()
     for year in sorted(target_years):
         candidates = [
             (capture, directory)
@@ -1336,7 +1759,8 @@ def _archive_directory_state(
                 blockers.append({"kind": "archive_directory_year_issue_identity_conflict", "year": year, "source_url": capture["source_url"]})
             for row in rows:
                 if row.get("url") and row.get("issue"):
-                    direct_issue_identities.add((urlsplit(row["url"]).path, str(row["issue"])))
+                    issue_path = urlsplit(row["url"]).path
+                    direct_issue_identities.add((issue_path, str(row["issue"])))
             for link in directory.get("volume_links", []):
                 volume = link.get("volume")
                 url = link.get("url")
@@ -1355,8 +1779,6 @@ def _archive_directory_state(
                     blockers.append({"kind": "archive_directory_volume_link_conflict", "year": year, "volume": volume, "urls": sorted(urls)})
                     continue
                 url = next(iter(urls))
-                key = (year, volume, urlsplit(url).path)
-                referenced_volumes.add(key)
                 volume_dirs = [
                     (volume_capture, volume_directory)
                     for volume_capture, volume_directory in directories
@@ -1388,6 +1810,89 @@ def _archive_directory_state(
         elif not observed_issue_identities:
             blockers.append({"kind": "archive_directory_year_issue_links_missing", "year": year})
 
+        # Some annual pages directly list most issues but omit late additions.
+        # A complete issue-page dropdown can supplement another year's annual
+        # directory when the source issue is an exact link from any complete,
+        # root-linked annual page and its captured heading agrees with the
+        # dropdown's year, volume, and issue.
+        for volume_capture, volume_directory in directories:
+            if volume_directory.get("kind") != "volume" or volume_directory.get("year") != year:
+                continue
+            source = urlsplit(volume_capture["source_url"])
+            direct_source_rows = linked_annual_issue_rows_by_path.get(source.path, [])
+            if not direct_source_rows:
+                continue
+            route = re.fullmatch(
+                r"/bioinformatics/issue/([0-9]+)/([0-9]+(?:-[0-9]+)?|Supplement_[0-9]+)",
+                source.path,
+            )
+            directory_year = volume_directory.get("year")
+            directory_volume = volume_directory.get("volume")
+            entry_url = volume_directory.get("entry_url", volume_capture["source_url"])
+            source_issue = archive_issues.get(source.path, {})
+            source_identity_ok = (
+                route is not None
+                and not source.query
+                and directory_year == year
+                and route.group(1) == str(directory_volume)
+                and entry_url == volume_capture["source_url"]
+                and all(
+                    str(row.get("volume")) == route.group(1)
+                    and str(row.get("issue")) == route.group(2)
+                    for _archive_year, row in direct_source_rows
+                )
+                and source_issue.get("identity_source_url")
+                and source_issue.get("year") == directory_year
+                and str(source_issue.get("volume")) == route.group(1)
+                and str(source_issue.get("issue")) == route.group(2)
+            )
+            if not source_identity_ok:
+                blockers.append({
+                    "kind": "archive_directory_volume_dropdown_identity_conflict",
+                    "year": year,
+                    "source_url": volume_capture["source_url"],
+                })
+                continue
+            if (
+                volume_directory.get("invalid_evidence")
+                or volume_directory.get("complete") is not True
+                or volume_capture.get("complete") is not True
+            ):
+                blockers.append({
+                    "kind": "archive_directory_volume_dropdown_not_attested_complete",
+                    "year": year,
+                    "source_url": volume_capture["source_url"],
+                })
+                continue
+            rows = volume_capture["data"].get("issues", [])
+            dropdown_rows_valid = bool(rows)
+            dropdown_identities: set[tuple[str, str]] = set()
+            for row in rows:
+                row_url = urlsplit(row.get("url", ""))
+                row_route = re.fullmatch(
+                    r"/bioinformatics/issue/([0-9]+)/([0-9]+(?:-[0-9]+)?|Supplement_[0-9]+)",
+                    row_url.path,
+                )
+                if (
+                    row.get("year") != year
+                    or str(row.get("volume")) != str(directory_volume)
+                    or not row_route
+                    or row_route.group(1) != str(directory_volume)
+                    or row_route.group(2) != str(row.get("issue"))
+                    or row_url.query
+                ):
+                    dropdown_rows_valid = False
+                    break
+                dropdown_identities.add((row_url.path, str(row["issue"])))
+            if not dropdown_rows_valid:
+                blockers.append({
+                    "kind": "archive_directory_volume_dropdown_issue_identity_conflict",
+                    "year": year,
+                    "source_url": volume_capture["source_url"],
+                })
+                continue
+            observed_issue_identities.update(dropdown_identities)
+
         # A reviewed misplaced official link supplements this year's actual
         # annual directory; it never replaces the directory completeness gate.
         observed_issue_identities.update(
@@ -1396,10 +1901,21 @@ def _archive_directory_state(
             if issue.get("year") == year
         )
         expected_issue_identities = {
+            (path, str(occurrence["issue"]))
+            for path, issue in archive_issues.items()
+            for occurrence in issue.get("archive_occurrences", [])
+            if occurrence.get("year") == year and occurrence.get("issue")
+        }
+        expected_issue_identities.update(
             (path, str(issue["issue"]))
             for path, issue in archive_issues.items()
+            if not issue.get("archive_occurrences") and issue.get("year") == year and issue.get("issue")
+        )
+        expected_issue_identities.update(
+            (path, str(issue["issue"]))
+            for path, issue in (reviewed_additions or {}).items()
             if issue.get("year") == year and issue.get("issue")
-        }
+        )
         if observed_issue_identities != expected_issue_identities:
             blockers.append({
                 "kind": "archive_directory_year_issue_set_mismatch",
@@ -1407,17 +1923,6 @@ def _archive_directory_state(
                 "missing_issue_count": len(expected_issue_identities - observed_issue_identities),
                 "unlinked_issue_count": len(observed_issue_identities - expected_issue_identities),
             })
-
-    for capture, directory in directories:
-        if directory.get("kind") == "volume":
-            year = directory.get("year")
-            volume = directory.get("volume")
-            entry_path = urlsplit(directory.get("entry_url", capture["source_url"])).path
-            if (year, volume, entry_path) not in referenced_volumes:
-                # A volume dropdown may be observed alongside a complete
-                # annual issue list. It is supplementary and not required in
-                # that directly-listed page shape.
-                continue
 
     # Archive issue anchors are still retained as observed identities. The
     # directories above separately establish that each year's complete list
@@ -1466,6 +1971,7 @@ def _article_detail(capture: dict[str, Any]) -> dict[str, Any]:
         "source_native_id": article_native_id(capture["source_url"]),
         "source_url": capture["source_url"],
         "observed_at": capture["observed_at"],
+        "complete": capture["complete"],
         "title": data.get("citation_title"),
         "authors": data.get("citation_authors", []),
         "doi": data.get("citation_doi"),
@@ -1483,8 +1989,9 @@ def _article_detail(capture: dict[str, Any]) -> dict[str, Any]:
 
 def classify_scope(document_type: str | None, title: str | None) -> tuple[str, str | None]:
     type_text = normalize_space(document_type or "").casefold()
+    type_components = [part.strip() for part in type_text.split(";")]
     for pattern, reason in EXCLUDED_TYPE_REASONS:
-        if pattern.search(type_text):
+        if any(pattern.search(part) for part in type_components):
             return "exclude", reason
     if title:
         for pattern, reason in EXCLUDED_TITLE_PREFIXES:
@@ -1492,7 +1999,26 @@ def classify_scope(document_type: str | None, title: str | None) -> tuple[str, s
                 return "exclude", reason
     if INCLUDED_TYPE_RE.search(type_text):
         return "include", None
+    if any(re.fullmatch(r"discovery\s+notes?", part) for part in type_components):
+        return "include", None
+    if any(ECCB_CONFERENCE_PARENT_TYPE_RE.fullmatch(part) for part in type_components):
+        return "include", None
+    if title and any(ISCB_MESSAGE_COMPONENT_RE.fullmatch(part) for part in type_components):
+        normalized_title = normalize_space(title)
+        if ISCB_EDITORIAL_RESPONSE_TITLE_RE.search(normalized_title):
+            return "exclude", "editorial"
+        if ISCB_AWARD_COMPETITION_TITLE_RE.search(normalized_title) or any(
+            pattern.search(normalized_title) for pattern in ISCB_MEETING_REPORT_TITLE_RES
+        ):
+            return "exclude", "society_information"
     return "unresolved", None
+
+
+def _catalog_exclusion_reason(source_reason: str) -> str:
+    """Map venue-specific exclusion reasons to the shared catalog taxonomy."""
+    if source_reason in {"letter_to_editor", "expression_of_concern"}:
+        return "non_research_content"
+    return source_reason
 
 
 def _prov(url: str, time: str, method: str, **extra: Any) -> dict[str, Any]:
@@ -1507,16 +2033,21 @@ def collect(
     supplement_records_path: Path | None = None,
     crossref_records_path: Path | None = None,
     archive_additions_path: Path | None = None,
+    scope_decisions_path: Path | None = None,
 ) -> dict[str, Any]:
     captures = _load_captures(pages_index, evidence_root)
     supplement_records = _load_europe_pmc_records(supplement_records_path)
     crossref_records = _load_crossref_records(crossref_records_path)
-    archive_issues, archive_year_links = _archive_issue_map(captures)
+    scope_decision_document, scope_decisions_by_id, scope_decision_report = _load_scope_decisions(
+        scope_decisions_path,
+        evidence_root,
+    )
+    issue_page_captures = [capture for capture in captures if capture["page_type"] == "issue"]
+    archive_issues, archive_year_links = _archive_issue_map(captures, issue_page_captures)
     reviewed_additions = _reviewed_archive_additions(
         archive_additions_path, evidence_root, captures, archive_issues,
     )
     archive_issues.update(reviewed_additions)
-    issue_page_captures = [capture for capture in captures if capture["page_type"] == "issue"]
     issue_captures = {
         urlsplit(capture["source_url"]).path: capture
         for capture in issue_page_captures
@@ -1525,7 +2056,11 @@ def collect(
     advance_captures = [capture for capture in captures if capture["page_type"] == "advance"]
     detail_captures = [capture for capture in captures if capture["page_type"] == "article"]
     archive_chain_complete, archive_chain_blockers = _listing_chain_state(archive_captures, "archive")
-    issue_chain_complete, issue_chain_blockers = _listing_chain_state(issue_page_captures, "issue")
+    issue_chain_complete, issue_chain_blockers = _listing_chain_state(
+        issue_page_captures,
+        "issue",
+        require_navigation_evidence=True,
+    )
     advance_chain_complete, advance_chain_blockers = _listing_chain_state(
         advance_captures,
         "advance",
@@ -1535,6 +2070,13 @@ def collect(
     occurrences = [item for capture in captures if capture["page_type"] in {"issue", "advance"} for item in _capture_items(capture)]
     details = [_article_detail(capture) for capture in detail_captures]
     unresolved: list[dict[str, Any]] = []
+    for report_row in scope_decision_report:
+        if report_row["status"] == "invalid":
+            unresolved.append({
+                "kind": "scope_decision_invalid",
+                "source_native_id": report_row.get("source_native_id"),
+                "reason": "; ".join(report_row.get("validation_errors", [])),
+            })
 
     target_years = set(range(SCOPE_START, datetime.now(timezone.utc).year + 1))
     seen_archive_years = {item["year"] for item in archive_year_links}
@@ -1778,10 +2320,13 @@ def collect(
                 unresolved.append({"kind": "conflicting_article_detail_captures", "source_native_id": canonical_id, "source_urls": sorted(row["source_url"] for row in details_for_entity)})
                 continue
         detail = details_for_entity[0] if details_for_entity else {}
+        article_detail_checked = any(row.get("complete") is True for row in details_for_entity)
 
         archive_entry = archive_issues.get(urlsplit(chosen["enumeration_source_url"]).path) if chosen["page_type"] == "issue" else None
         if archive_entry:
-            year_url, year_time, year_method = archive_entry["source_url"], archive_entry["observed_at"], "official_archive_volume_year"
+            year_url = archive_entry.get("identity_source_url") or archive_entry["source_url"]
+            year_time = archive_entry.get("identity_observed_at") or archive_entry["observed_at"]
+            year_method = archive_entry.get("identity_method") or "official_archive_volume_year"
         elif detail.get("publication_date"):
             year_url, year_time, year_method = detail["source_url"], detail["observed_at"], "official_advance_publication_date"
         elif supplement and supplement.get("issue_year") == year:
@@ -1804,11 +2349,19 @@ def collect(
         selected_type = None
         type_source_url = detail.get("source_url") or chosen["enumeration_source_url"]
         type_observed_at = detail.get("observed_at") or chosen["enumeration_observed_at"]
-        for candidate_type, candidate_url, candidate_time in type_candidates:
-            if classify_scope(candidate_type, title)[0] != "unresolved":
-                selected_type = candidate_type
-                type_source_url, type_observed_at = candidate_url, candidate_time
-                break
+        classified_candidates = [
+            (candidate_type, candidate_url, candidate_time, classify_scope(candidate_type, title)[0])
+            for candidate_type, candidate_url, candidate_time in type_candidates
+        ]
+        resolved_candidate = next(
+            (row for row in classified_candidates if row[3] == "exclude"),
+            None,
+        ) or next(
+            (row for row in classified_candidates if row[3] == "include"),
+            None,
+        )
+        if resolved_candidate:
+            selected_type, type_source_url, type_observed_at, _decision = resolved_candidate
         if not selected_type and type_candidates:
             selected_type, type_source_url, type_observed_at = type_candidates[0]
         type_method = "official_article_type_or_issue_section"
@@ -1829,8 +2382,18 @@ def collect(
         authors_source_url = detail.get("source_url") if detail.get("authors") else (supplement.get("source_url") if supplement and supplement.get("authors") else chosen["enumeration_source_url"])
         authors_observed_at = detail.get("observed_at") if detail.get("authors") else (supplement.get("observed_at") if supplement and supplement.get("authors") else chosen["enumeration_observed_at"])
         abstract = detail.get("abstract") or (supplement.get("abstract") if supplement else None)
-        abstract_source_url = detail.get("source_url") if detail.get("abstract") else (supplement.get("source_url") if supplement and supplement.get("abstract") else chosen["enumeration_source_url"])
-        abstract_observed_at = detail.get("observed_at") if detail.get("abstract") else (supplement.get("observed_at") if supplement and supplement.get("abstract") else chosen["enumeration_observed_at"])
+        if detail.get("abstract"):
+            abstract_source_url, abstract_observed_at = detail["source_url"], detail["observed_at"]
+        elif supplement and supplement.get("abstract"):
+            abstract_source_url, abstract_observed_at = supplement["source_url"], supplement["observed_at"]
+        elif article_detail_checked:
+            abstract_source_url, abstract_observed_at = detail["source_url"], detail["observed_at"]
+        elif supplement:
+            abstract_source_url, abstract_observed_at = supplement["source_url"], supplement["observed_at"]
+        elif detail:
+            abstract_source_url, abstract_observed_at = detail["source_url"], detail["observed_at"]
+        else:
+            abstract_source_url, abstract_observed_at = chosen["enumeration_source_url"], chosen["enumeration_observed_at"]
         doi = detail.get("doi") or (dois[0] if dois else normalize_doi(chosen.get("doi"))) or (supplement.get("doi") if supplement else None)
         doi_from_supplement = not detail.get("doi") and not dois and bool(supplement and supplement.get("doi"))
         doi_source_url = detail["source_url"] if detail.get("doi") else (supplement["source_url"] if doi_from_supplement else chosen["enumeration_source_url"])
@@ -1881,15 +2444,74 @@ def collect(
         abstract_source_method = (
             "visible_abstract_section" if detail.get("abstract")
             else "Europe_PMC_abstract" if supplement and supplement.get("abstract")
-            else "checked_no_abstract"
+            else "checked_no_abstract" if article_detail_checked
+            else "Europe_PMC_abstract_not_returned; OUP_article_detail_pending" if supplement
+            else "OUP_article_detail_capture_incomplete; abstract_check_pending" if detail
+            else "OUP_article_detail_abstract_check_pending"
         )
         decision, reason = classify_scope(selected_type, title)
+        applied_scope_review: dict[str, Any] | None = None
+        scope_review_evidence: dict[str, Any] | None = None
+        scope_review_entry = scope_decisions_by_id.get(canonical_id)
+        if scope_review_entry:
+            scope_review_row, scope_report_row = scope_review_entry
+            binding_errors = _scope_review_binding_errors(
+                scope_review_row,
+                source_native_id=canonical_id,
+                source_dois=supplement_dois,
+                title=title,
+                landing_url=chosen["landing_url"],
+                supplement=supplement,
+                supplement_matched_by=supplement_matched_by,
+                supplement_match_error=supplement_match_error,
+            )
+            if binding_errors:
+                scope_report_row["status"] = "invalid"
+                scope_report_row["validation_errors"] = binding_errors
+                unresolved.append({
+                    "kind": "scope_decision_invalid",
+                    "source_native_id": canonical_id,
+                    "reason": "; ".join(binding_errors),
+                })
+            elif decision != "unresolved" or any(
+                EPMC_EXPLICIT_NONRESEARCH_TYPE_RE.search(normalize_space(value))
+                for value in (supplement.get("publication_types", []) if supplement else [])
+            ):
+                scope_report_row["status"] = "already_resolved_by_source"
+                scope_report_row["source_scope_decision"] = decision
+                scope_report_row["source_scope_reason"] = reason
+                if decision == "unresolved":
+                    scope_report_row["scope_review_not_applied_reason"] = "explicit Europe PMC nonresearch publication type"
+            else:
+                applied_scope_review = scope_review_row
+                scope_review_evidence = _scope_review_evidence(scope_decision_document, scope_review_row)
+                if scope_review_row["decision"] == "include_research":
+                    decision, reason = "include", None
+                else:
+                    decision, reason = "exclude", scope_review_row["reason_code"]
+                reviewed_api_type = _europe_pmc_type_as_supplied(supplement.get("publication_types", []))
+                if reviewed_api_type:
+                    selected_type = reviewed_api_type
+                    type_source_url = supplement["source_url"]
+                    type_observed_at = supplement["observed_at"]
+                    type_method = "Europe_PMC_article_publication_type_as_supplied"
+                scope_report_row["status"] = "applied"
+                scope_report_row["application_decision"] = decision
+                scope_report_row["application_method"] = scope_review_evidence["method"]
+            scope_report_row["matched_oup_title"] = title
+            scope_report_row["matched_oup_landing_url"] = chosen["landing_url"]
+            scope_report_row["matched_europe_pmc_source_url"] = supplement.get("source_url") if supplement else None
+            scope_report_row["matched_europe_pmc_observed_at"] = supplement.get("observed_at") if supplement else None
+            scope_report_row["matched_europe_pmc_abstract_sha256"] = supplement.get("abstract_sha256") if supplement else None
+            scope_report_row["matched_europe_pmc_publication_types"] = supplement.get("publication_types", []) if supplement else []
         if decision == "unresolved":
             unresolved.append({"kind": "research_scope_unresolved", "source_native_id": canonical_id, "year": year, "title": title, "document_type": selected_type, "source_url": type_source_url})
             continue
 
         if decision == "exclude":
             list_time = chosen["enumeration_observed_at"]
+            source_reason = reason or "non_research_content"
+            catalog_reason = _catalog_exclusion_reason(source_reason)
             exclusions.append({
                 "schema_version": EXCLUSION_SCHEMA,
                 "venue_id": VENUE_ID,
@@ -1903,8 +2525,26 @@ def collect(
                 "doi": doi,
                 "document_type": selected_type or reason,
                 "inclusion_decision": "exclude",
-                "exclusion_reason_code": reason,
-                "exclusion_reason_detail": f"Explicit official type or title classification: {selected_type or title}.",
+                "exclusion_reason_code": catalog_reason,
+                "exclusion_reason_detail": (
+                    (
+                        f"Reviewed scope decision {source_reason}: {applied_scope_review['reason']} "
+                        f"type={selected_type!r}; title={title!r}; catalog taxonomy reason={catalog_reason}."
+                    ) if applied_scope_review else (
+                        f"Official type/title rule {source_reason}: type={selected_type!r}; title={title!r}; "
+                        f"catalog taxonomy reason={catalog_reason}."
+                    )
+                ),
+                "exclusion_evidence": {
+                    "source_exclusion_reason_code": source_reason,
+                    "catalog_exclusion_reason_code": catalog_reason,
+                    "reason_taxonomy_version": "literature-exclusion-taxonomy-v1",
+                    "classification_method": scope_review_evidence["method"] if scope_review_evidence else "official_type_or_title_scope_rule",
+                    "official_type": None if scope_review_evidence else selected_type,
+                    "official_title": title,
+                    **({"scope_decision_evidence": scope_review_evidence} if scope_review_evidence else {}),
+                },
+                **({"scope_decision_evidence": scope_review_evidence} if scope_review_evidence else {}),
                 "source_url": chosen["enumeration_source_url"],
                 "landing_url": chosen["landing_url"],
                 "observed_at": max(list_time, detail.get("observed_at") or list_time),
@@ -1913,8 +2553,26 @@ def collect(
                     "title": _prov(title_source_url, title_time, "official_citation_title" if detail.get("title") else "official_issue_listing_title"),
                     "year": _prov(year_url, year_time, year_method),
                     "document_type": _prov(type_source_url, type_observed_at, type_method),
-                    "inclusion_decision": _prov(type_source_url, type_observed_at, "explicit_nonresearch_scope_rule"),
-                    "exclusion_reason_code": _prov(type_source_url, type_observed_at, "explicit_editorial_correction_or_frontmatter_type"),
+                    "inclusion_decision": _prov(
+                        type_source_url,
+                        type_observed_at,
+                        scope_review_evidence["method"] if scope_review_evidence else "explicit_nonresearch_scope_rule",
+                        **({
+                            "review_reason_code": applied_scope_review["reason_code"],
+                            "review_reason": applied_scope_review["reason"],
+                            "review_source": scope_review_evidence["review_source"],
+                            "review_source_sha256": scope_review_evidence["review_source"]["sha256"],
+                            "review_receipt_sha256": scope_review_evidence["review_receipt_sha256"],
+                            "europe_pmc_abstract_sha256": scope_review_evidence["europe_pmc"]["abstract_sha256"],
+                        } if scope_review_evidence else {}),
+                    ),
+                    "exclusion_reason_code": _prov(
+                        type_source_url,
+                        type_observed_at,
+                        scope_review_evidence["method"] if scope_review_evidence else "official_type_or_title_scope_rule",
+                        source_exclusion_reason_code=source_reason,
+                        catalog_exclusion_reason_code=catalog_reason,
+                    ),
                     **({
                         "europe_pmc_publication_types": _prov(
                             supplement["source_url"], supplement["observed_at"],
@@ -1976,6 +2634,18 @@ def collect(
                 **({"content_version": "vor", "license": crossref_record.get("licenses", [])} if pdf_from_crossref and crossref_record else {}),
             ),
         }
+        if scope_review_evidence:
+            field_provenance["inclusion_decision"] = _prov(
+                supplement["source_url"],
+                supplement["observed_at"],
+                SCOPE_REVIEWED_INCLUSION_METHOD,
+                review_reason_code=applied_scope_review["reason_code"],
+                review_reason=applied_scope_review["reason"],
+                review_source=scope_review_evidence["review_source"]["file"],
+                review_source_sha256=scope_review_evidence["review_source"]["sha256"],
+                review_receipt_sha256=scope_review_evidence["review_receipt_sha256"],
+                europe_pmc_abstract_sha256=scope_review_evidence["europe_pmc"]["abstract_sha256"],
+            )
         if crossref_record and crossref_vor:
             field_provenance["crossref_pdf_metadata"] = _prov(
                 crossref_record["source_url"],
@@ -1986,18 +2656,35 @@ def collect(
             )
         missing: dict[str, Any] = {}
         for field, value, reason_code in (
-            ("abstract", abstract, "not_present_on_official_page"),
+            ("abstract", abstract, "not_present_on_official_page" if article_detail_checked else "oup_article_detail_abstract_check_pending"),
             ("doi", doi, "not_present_on_official_page"),
             ("publication_date", publication_date, "not_present_on_official_page"),
             ("pdf_url", pdf_url, "not_visible" if detail.get("source_url") else "not_present_on_official_page"),
         ):
             if not value:
-                checked_sources = list_urls.copy()
-                if detail.get("source_url"):
-                    checked_sources.insert(0, detail["source_url"])
-                elif supplement:
-                    checked_sources.insert(0, supplement["source_url"])
+                if field == "abstract":
+                    checked_sources = (
+                        [detail["source_url"]] if article_detail_checked
+                        else [supplement["source_url"]] if supplement
+                        else []
+                    )
+                else:
+                    checked_sources = list_urls.copy()
+                    if detail.get("source_url"):
+                        checked_sources.insert(0, detail["source_url"])
+                    elif supplement:
+                        checked_sources.insert(0, supplement["source_url"])
                 missing[field] = {"reason_code": reason_code, "checked_sources": checked_sources}
+        if not abstract and not article_detail_checked:
+            unresolved.append({
+                "kind": "oup_article_detail_abstract_check_pending",
+                "source_native_id": canonical_id,
+                "year": year,
+                "landing_url": chosen["landing_url"],
+                "enumeration_source_url": chosen["enumeration_source_url"],
+                "supplement_source_url": supplement.get("source_url") if supplement else None,
+                "incomplete_article_detail_source_url": detail.get("source_url") if detail else None,
+            })
         if not detail.get("source_url") and not pdf_url and (supplement or crossref_record):
             unresolved.append({
                 "kind": "oup_article_detail_pdf_check_pending",
@@ -2036,6 +2723,7 @@ def collect(
             "crossref_pdf_content_version": "vor" if crossref_vor else None,
             "crossref_pdf_license": crossref_record.get("licenses", []) if crossref_record and crossref_vor else [],
             "inclusion_decision": "include",
+            **({"scope_decision_evidence": scope_review_evidence} if scope_review_evidence else {}),
             "source_url": chosen["enumeration_source_url"],
             "observed_at": max(observed_times),
             "field_provenance": field_provenance,
@@ -2046,6 +2734,17 @@ def collect(
             ],
         })
         accounted_ids.add(canonical_id)
+
+    for report_row in scope_decision_report:
+        if report_row["status"] == "pending":
+            report_row["status"] = "invalid"
+            error = "reviewed source_native_id was not processed in this collection"
+            report_row["validation_errors"] = [error]
+            unresolved.append({
+                "kind": "scope_decision_invalid",
+                "source_native_id": report_row.get("source_native_id"),
+                "reason": error,
+            })
 
     target_issue_paths = set(archive_issues)
     issue_pages_complete = (
@@ -2081,6 +2780,7 @@ def collect(
 
     output_root.mkdir(parents=True, exist_ok=True)
     write_jsonl(output_root / "archive_additions_report.jsonl", list(reviewed_additions.values()))
+    write_jsonl(output_root / "scope_decision_report.jsonl", scope_decision_report)
     expected_root = output_root / "expected"
     expected_root.mkdir(parents=True, exist_ok=True)
     for previous_file in expected_root.glob("*.jsonl"):
@@ -2153,6 +2853,9 @@ def collect(
         "staging_records": len(staging),
         "exclusions": len(exclusions),
         "unresolved": len(unresolved),
+        "scope_decisions_applied": sum(row["status"] == "applied" for row in scope_decision_report),
+        "scope_decisions_already_resolved_by_source": sum(row["status"] == "already_resolved_by_source" for row in scope_decision_report),
+        "scope_decisions_invalid": sum(row["status"] == "invalid" for row in scope_decision_report),
         "abstract_present": sum(bool(row.get("abstract")) for row in staging),
         "doi_present": sum(bool(row.get("doi")) for row in staging),
         "observed_pdf_links": sum(bool(row.get("pdf_url")) for row in staging),
@@ -2177,6 +2880,7 @@ def build_parser() -> argparse.ArgumentParser:
     collect_parser.add_argument("--supplement-records", type=Path, help="normalized Europe PMC JSONL for exact-identifier field supplementation")
     collect_parser.add_argument("--crossref-records", type=Path, help="normalized Crossref JSONL for exact-DOI published-online/VOR metadata supplementation")
     collect_parser.add_argument("--archive-additions", type=Path, help="reviewed missing annual links backed by saved official anchors and captured issue identities")
+    collect_parser.add_argument("--scope-decisions", type=Path, help="reviewed item-level scope decisions bound to exact OUP identities and Europe PMC evidence")
     return parser
 
 
@@ -2194,6 +2898,7 @@ def main() -> int:
             args.supplement_records,
             args.crossref_records,
             args.archive_additions,
+            args.scope_decisions,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(json.dumps({"status": "FAIL", "error": str(exc)}, ensure_ascii=False))

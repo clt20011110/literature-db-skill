@@ -3,6 +3,8 @@ from __future__ import annotations
 import http.client
 import hashlib
 import json
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -14,6 +16,8 @@ from tools.collect_bioinformatics_metadata import (
     ADVANCE_URL,
     ARCHIVE_URL,
     CAPTURE_SCHEMA,
+    SCOPE_DECISION_FINGERPRINT_METHOD,
+    SCOPE_DECISION_SCHEMA,
     CaptureHandler,
     _archive_directory_state,
     _archive_issue_map,
@@ -36,6 +40,7 @@ from tools.collect_bioinformatics_metadata import (
     normalize_doi,
     sanitize_capture,
 )
+from tools.litdb.metadata_pipeline import _validate_exclusion
 
 
 NOW = "2026-10-05T08:00:00Z"
@@ -73,9 +78,20 @@ def article_data(title: str, doi: str, document_type: str | None, authors: list[
 
 
 class BioinformaticsCaptureTests(unittest.TestCase):
+    def test_script_cli_works_outside_repository(self) -> None:
+        script = Path(__file__).resolve().parents[2] / "tools" / "collect_bioinformatics_metadata.py"
+        with tempfile.TemporaryDirectory() as working_directory:
+            result = subprocess.run(
+                [sys.executable, str(script), "collect", "--help"],
+                cwd=working_directory, capture_output=True, text=True, check=False,
+            )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--scope-decisions", result.stdout)
+
     def test_source_urls_drop_only_observed_volume_browse_parameter(self) -> None:
         capture = make_capture("issue", ISSUE_URL + "?browseBy=volume", {
             "year": 2026, "volume": "42", "issue": "1", "items": [],
+            "pagination": {"next_page_url": None, "terminal_observed": True},
         })
         normalized = sanitize_capture(capture)
         self.assertEqual(normalized["source_url"], ISSUE_URL)
@@ -92,7 +108,7 @@ class BioinformaticsCaptureTests(unittest.TestCase):
         for label in (
             "Original Paper", "ORIGINALS PAPERS", "Applications Notes", "Review",
             "Research Supplement", "research-article", "research article",
-            "review-article", "review article",
+            "review-article", "review article", "DISCOVERY NOTE", "Discovery Notes; GENOME ANALYSIS",
         ):
             with self.subTest(label=label):
                 self.assertEqual(classify_scope(label, "Research title"), ("include", None))
@@ -106,22 +122,238 @@ class BioinformaticsCaptureTests(unittest.TestCase):
             ("RETRACTED ARTICLE", "retraction"), ("AUTHOR INDEX", "front_matter"),
             ("LETTER TO THE EDITOR", "letter_to_editor"),
             ("LETTERS TO THE EDITOR", "letter_to_editor"),
+            ("LETTERS TO THE EDITOR; SYSTEMS BIOLOGY", "letter_to_editor"),
+            ("GENOME ANALYSIS; LETTER TO THE EDITOR", "letter_to_editor"),
+            ("EXPRESSION OF CONCERN", "expression_of_concern"),
         ):
             with self.subTest(observed_nonresearch_section=label):
                 self.assertEqual(classify_scope(label, "Publisher-listed item"), ("exclude", reason))
         self.assertEqual(classify_scope("Original Paper", "A novel author index algorithm"), ("include", None))
         self.assertEqual(classify_scope("Conference proceedings", "Author Index"), ("exclude", "front_matter"))
         self.assertEqual(classify_scope("Original Paper", "Letters in DNA sequences"), ("include", None))
+        self.assertEqual(classify_scope("Original Paper", "Expression of concern in a text corpus"), ("include", None))
+        self.assertEqual(classify_scope("Letters to the editor analysis", "Research title"), ("unresolved", None))
+        self.assertEqual(classify_scope("Discovery Note", "Rebuttal to the Letter to the Editor in response to the paper: proper evaluation of alignment-free network comparison methods"), ("exclude", "letter_to_editor"))
+        self.assertEqual(classify_scope("Discovery Note", "More challenges for machine-learning protein interactions"), ("include", None))
+        self.assertEqual(classify_scope("Journal Article", "A discovery note about genomics"), ("unresolved", None))
+        self.assertEqual(classify_scope("Discovery note commentary", "Research title"), ("unresolved", None))
         for label in ("research-article", "research article", "review-article", "review article", "Review"):
             with self.subTest(europe_pmc_type=label):
                 self.assertEqual(_europe_pmc_scope_fallback_type([label]), label)
         self.assertEqual(_europe_pmc_scope_fallback_type([" research-article "]), " research-article ")
         self.assertIsNone(_europe_pmc_scope_fallback_type(["Journal Article"]))
         for conflict in (
-            "Editorial", "Correction", "Corrigendum", "Erratum", "Retraction", "Retracted Publication", "Letter", "Comment", "News",
+            "Editorial", "Correction", "Corrigendum", "Erratum", "Retraction", "Retracted Publication", "Letter", "Comment", "News", "Expression of Concern",
         ):
             with self.subTest(conflicting_europe_pmc_type=conflict):
                 self.assertIsNone(_europe_pmc_scope_fallback_type(["review-article", conflict]))
+
+    def test_eccb_conference_parent_includes_research_and_preserves_child_exclusions(self) -> None:
+        parent = "ECCB 2016: The 15th European Conference on Computational Biology"
+        self.assertEqual(classify_scope(parent, "A research paper title"), ("include", None))
+        self.assertEqual(classify_scope("ECCB 2016: The 15th European Conference on Computational Biology; EDITORIAL", parent), ("exclude", "editorial"))
+        self.assertEqual(classify_scope("ECCB 2016 ORGANIZATION", "ECCB 2016 ORGANIZATION"), ("exclude", "front_matter"))
+        self.assertEqual(classify_scope("ECCB 2017: The 16th European Conference on Computational Biology", "A conference paper"), ("include", None))
+        self.assertEqual(classify_scope("International Conference on Computational Biology 2017", "A conference paper"), ("unresolved", None))
+        for title in (
+            "Organization of awards in a comparative genomics workflow",
+            "An award-winning method for meeting gene annotation challenges",
+        ):
+            with self.subTest(ordinary_research_title=title):
+                self.assertEqual(classify_scope("Original Paper", title), ("include", None))
+
+        item_specs = [
+            ("ECCB 2016: The 15th European Conference on Computational Biology", ["EDITORIAL"], parent),
+            ("ECCB 2016 ORGANIZATION", ["ECCB 2016 ORGANIZATION"], parent),
+            ("Author Index", ["AUTHOR INDEX"], parent),
+            ("Estimating real cell size distribution from cross-section microscopy imaging", ["DATA"], parent),
+            ("Organization of awards in a comparative genomics workflow", ["GENES"], parent),
+            ("An award-winning method for meeting gene annotation challenges", ["GENES"], parent),
+            ("Proceedings of the International Conference on Computational Biology", [], "International Conference on Computational Biology 2017"),
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            run_root = Path(temporary)
+            browser_root = run_root / "raw" / "browser"
+            browser_root.mkdir(parents=True)
+            items = []
+            for index, (title, categories, section) in enumerate(item_specs, 1):
+                items.append({
+                    "landing_url": f"https://academic.oup.com/bioinformatics/article/32/17/eccb-case/{9901000 + index}",
+                    "title": title,
+                    "doi": f"10.1093/bioinformatics/eccbcase{index}",
+                    "citation": "Bioinformatics, Volume 32, Issue 17, 2016",
+                    "section": section,
+                    "categories": categories,
+                })
+            issue_url = "https://academic.oup.com/bioinformatics/issue/32/17"
+            capture = sanitize_capture(make_capture("issue", issue_url, {
+                "year": 2016, "volume": "32", "issue": "17", "items": items,
+                "pagination": {"next_page_url": None, "terminal_observed": True},
+            }))
+            captures = [capture]
+            for item in items:
+                captures.append(sanitize_capture(make_capture(
+                    "article",
+                    item["landing_url"],
+                    article_data(item["title"], item["doi"], "Journal Article"),
+                )))
+            index_path = browser_root / "index.jsonl"
+            index_rows = []
+            for index, saved_capture in enumerate(captures):
+                relative = f"raw/browser/capture-{index}.json"
+                (run_root / relative).write_text(json.dumps(saved_capture), encoding="utf-8")
+                index_rows.append({
+                    "page_type": saved_capture["page_type"], "source_url": saved_capture["source_url"],
+                    "observed_at": saved_capture["observed_at"], "complete": saved_capture["complete"],
+                    "file": relative,
+                })
+            index_path.write_text("".join(json.dumps(row) + "\n" for row in index_rows), encoding="utf-8")
+            collect(index_path, run_root, run_root)
+            staging = [json.loads(line) for line in (run_root / "metadata_staging.jsonl").read_text(encoding="utf-8").splitlines()]
+            exclusions = [json.loads(line) for line in (run_root / "metadata_exclusions.jsonl").read_text(encoding="utf-8").splitlines()]
+            unresolved = [json.loads(line) for line in (run_root / "unresolved.jsonl").read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(len(staging), 3)
+        self.assertTrue(all(row["document_type"] == parent for row in staging))
+        self.assertEqual(
+            {row["document_type"] for row in exclusions},
+            {"EDITORIAL", "ECCB 2016 ORGANIZATION", "Journal Article"},
+        )
+        self.assertEqual({row["title"] for row in exclusions}, {item[0] for item in item_specs[:3]})
+        self.assertEqual(
+            {row["exclusion_reason_code"] for row in exclusions},
+            {"editorial", "front_matter"},
+        )
+        self.assertIn(
+            "research_scope_unresolved",
+            {row["kind"] for row in unresolved},
+        )
+        unknown = next(row for row in unresolved if row["kind"] == "research_scope_unresolved")
+        self.assertEqual(unknown["title"], "Proceedings of the International Conference on Computational Biology")
+
+    def test_iscb_messages_use_item_specific_nonresearch_evidence(self) -> None:
+        cases = [
+            ("MESSAGE FROM THE ISCB", "Message from the ISCB: 2015 ISCB Accomplishment by a Senior Scientist Award: Cyrus Chothia", "society_information"),
+            ("MESSAGE FROM THE ISCB", "Message from the ISCB: ISCB Ebola award for important future research on the computational biology of Ebola virus", "society_information"),
+            ("MESSAGE FROM ISCB", "Message from ISCB: Outstanding contributions to ISCB award", "society_information"),
+            ("MESSAGE FROM THE ISCB", "SNP-SIG 2013: the state of the art of genomic variant interpretation", None),
+            ("MESSAGE FROM THE ISCB", "Summary of the BioLINK SIG 2013 meeting at ISMB/ECCB 2013", "society_information"),
+            ("MESSAGE FROM THE ISCB", "The Bioinformatics Open Source Conference (BOSC) 2013", "society_information"),
+            ("MESSAGE FROM THE ISCB", "Message from the ISCB: ISMB/ECCB Rebooted: 2015 Brings Major Update to the Conference Program", "society_information"),
+            ("MESSAGE FROM THE ISCB", "Message from the ISCB: 2016 ISCB Accomplishment by a Senior Scientist Award Given to Søren Brunak", "society_information"),
+            ("MESSAGE FROM THE ISCB", "Message from the ISCB: 2016 Outstanding Contributions to ISCB Award: Burkhard Rost", "society_information"),
+            ("MESSAGE FROM THE ISCB", "ISCB’s initial reaction to New England Journal of Medicine editorial on data sharing", "editorial"),
+            ("MESSAGE FROM THE ISCB", "Message from the ISCB: The 5th ISCB Wikipedia competition: coming to a classroom near you?", "society_information"),
+            ("MESSAGE FROM THE ISCB", "Message from the ISCB: 2017 ISCB Accomplishment by a Senior Scientist Award Given to Pavel Pevzner", "society_information"),
+            ("MESSAGE FROM THE ISCB", "Message from the ISCB: 2017 ISCB Overton Prize Awarded to Christoph Bock", "society_information"),
+            ("MESSAGE FROM THE ISCB", "Message from the ISCB: 2017 Outstanding Contributions to ISCB Award Given to Fran Lewitter", "society_information"),
+            ("MESSAGE FROM THE ISCB", "Message from the ISCB: 2017 ISCB Innovator Award Given to Aviv Regev", "society_information"),
+            ("MESSAGE FROM THE ISCB", "2018 ISCB Innovator Award recognizes M. Madan Babu", "society_information"),
+            ("MESSAGE FROM THE ISCB", "2018 ISCB Overton Prize awarded to Cole Trapnell", "society_information"),
+            ("MESSAGE FROM THE ISCB", "Message from the ISCB: 2018 ISCB Accomplishments by a Senior Scientist Award", "society_information"),
+            ("MESSAGE FROM THE ISCB", "Message from the ISCB: 2018 Outstanding Contributions to ISCB Award: Russ Altman", "society_information"),
+            ("MESSAGE FROM THE ISCB", "2020 ISCB Innovatory Award: Xiaole Shirley Liu", "society_information"),
+            ("MESSAGE FROM THE ISCB", "2020 ISCB accomplishments by a Senior Scientist Award: Steven Salzberg", "society_information"),
+            ("MESSAGE FROM THE ISCB", "2020 Outstanding contributions to ISCB award: Judith Blake", "society_information"),
+            ("MESSAGE FROM ISCB", "Computational modelling in health and disease: highlights of the 6th annual SysMod meeting", "society_information"),
+            ("MESSAGE FROM ISCB; SYSTEMS BIOLOGY", "Advancements in computational modelling of biological systems: seventh annual SysMod meeting", "society_information"),
+        ]
+        observed = {}
+        for section, title, expected_reason in cases:
+            with self.subTest(section=section, title=title):
+                decision = classify_scope(section, title)
+                if expected_reason is None:
+                    self.assertEqual(decision, ("unresolved", None))
+                else:
+                    self.assertEqual(decision, ("exclude", expected_reason))
+                    observed[expected_reason] = observed.get(expected_reason, 0) + 1
+        self.assertEqual(len(cases), 24)
+        self.assertEqual(observed, {"society_information": 22, "editorial": 1})
+        self.assertEqual(
+            classify_scope("MESSAGE FROM ISCB", "A computational model of gene expression"),
+            ("unresolved", None),
+        )
+        self.assertEqual(
+            classify_scope("MESSAGE FROM ISCB", "An award-winning method for protein interaction prediction"),
+            ("unresolved", None),
+        )
+        self.assertEqual(
+            classify_scope("Original Paper", "An award-winning method for meeting challenges in genome analysis"),
+            ("include", None),
+        )
+        self.assertEqual(
+            classify_scope("Original Paper", "ISCB’s initial reaction to a conference editorial"),
+            ("include", None),
+        )
+
+    def test_exclusion_adapter_maps_venue_reasons_to_valid_catalog_taxonomy(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_root = Path(temporary)
+            browser_root = run_root / "raw" / "browser"
+            browser_root.mkdir(parents=True)
+            sections = [
+                ("LETTERS TO THE EDITOR; SYSTEMS BIOLOGY", "Response to a systems-biology letter"),
+                ("EXPRESSION OF CONCERN", "Expression of Concern: a published article"),
+                ("MESSAGE FROM THE ISCB", "Message from the ISCB: an Outstanding Contributions Award"),
+                ("MESSAGE FROM THE ISCB", "ISCB’s initial reaction to a journal editorial on data sharing"),
+            ]
+            items = []
+            for index, (section, title) in enumerate(sections, 1):
+                items.append({
+                    "landing_url": f"https://academic.oup.com/bioinformatics/article/31/1/{200000 + index}",
+                    "title": title,
+                    "authors_preview": [],
+                    "doi": None,
+                    "citation": "Bioinformatics, Volume 31, Issue 1, January 2015",
+                    "section": section,
+                    "categories": [],
+                    "pdf_url": None,
+                })
+            capture = sanitize_capture(make_capture("issue", ISSUE_URL.replace("42/1", "31/1"), {
+                "year": 2015, "volume": "31", "issue": "1", "issue_state": None, "items": items,
+                "pagination": {"next_page_url": None, "terminal_observed": True},
+            }))
+            capture_path = browser_root / "issue.json"
+            capture_path.write_text(json.dumps(capture), encoding="utf-8")
+            index_path = browser_root / "index.jsonl"
+            index_path.write_text(json.dumps({
+                "page_type": "issue", "source_url": capture["source_url"],
+                "observed_at": capture["observed_at"], "complete": True,
+                "file": "raw/browser/issue.json",
+            }) + "\n", encoding="utf-8")
+
+            collect(index_path, run_root, run_root)
+            exclusions = [
+                json.loads(line)
+                for line in (run_root / "metadata_exclusions.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+
+        self.assertEqual(len(exclusions), 4)
+        by_type = {row["document_type"]: row for row in exclusions}
+        expected = {
+            "Response to a systems-biology letter": ("letter_to_editor", "non_research_content"),
+            "Expression of Concern: a published article": ("expression_of_concern", "non_research_content"),
+            "Message from the ISCB: an Outstanding Contributions Award": ("society_information", "society_information"),
+            "ISCB’s initial reaction to a journal editorial on data sharing": ("editorial", "editorial"),
+        }
+        for row in exclusions:
+            source_reason, catalog_reason = expected[row["title"]]
+            self.assertEqual(row["exclusion_reason_code"], catalog_reason)
+            self.assertEqual(row["exclusion_evidence"]["source_exclusion_reason_code"], source_reason)
+            self.assertEqual(row["exclusion_evidence"]["catalog_exclusion_reason_code"], catalog_reason)
+            self.assertEqual(row["field_provenance"]["exclusion_reason_code"]["method"], "official_type_or_title_scope_rule")
+            self.assertIn(source_reason, row["exclusion_reason_detail"])
+            self.assertEqual(
+                _validate_exclusion(
+                    row,
+                    1,
+                    "bioinformatics",
+                    set(),
+                    {"academic.oup.com": ["/bioinformatics/"]},
+                ),
+                [],
+            )
 
     def _collect_single_europe_pmc_type_case(
         self,
@@ -130,6 +362,8 @@ class BioinformaticsCaptureTests(unittest.TestCase):
         publication_types: list[str],
         record_doi: str = "10.1093/bioinformatics/btu769",
         oup_doi: str = "10.1093/bioinformatics/btu769",
+        supplement_abstract: str | None = "A substantive review of structural bioinformatics and computational biophysics.",
+        complete_detail_without_abstract: bool = False,
     ) -> dict:
         with tempfile.TemporaryDirectory() as temporary:
             run_root = Path(temporary)
@@ -149,17 +383,26 @@ class BioinformaticsCaptureTests(unittest.TestCase):
             }
             capture = sanitize_capture(make_capture("issue", issue_url, {
                 "year": 2015, "volume": "31", "issue": "1", "issue_state": None, "items": [item],
+                "pagination": {"next_page_url": None, "terminal_observed": True},
             }))
-            capture_relpath = "raw/browser/issue.json"
-            (run_root / capture_relpath).write_text(json.dumps(capture), encoding="utf-8")
+            captures = [capture]
+            if complete_detail_without_abstract:
+                detail_data = article_data(item["title"], oup_doi, "Journal Article")
+                detail_data["abstract"] = None
+                captures.append(sanitize_capture(make_capture("article", landing_url, detail_data)))
             index_path = browser_root / "index.jsonl"
-            index_path.write_text(json.dumps({
-                "page_type": "issue",
-                "source_url": capture["source_url"],
-                "observed_at": capture["observed_at"],
-                "complete": capture["complete"],
-                "file": capture_relpath,
-            }) + "\n", encoding="utf-8")
+            index_rows = []
+            for index, saved_capture in enumerate(captures):
+                capture_relpath = f"raw/browser/capture-{index}.json"
+                (run_root / capture_relpath).write_text(json.dumps(saved_capture), encoding="utf-8")
+                index_rows.append({
+                    "page_type": saved_capture["page_type"],
+                    "source_url": saved_capture["source_url"],
+                    "observed_at": saved_capture["observed_at"],
+                    "complete": saved_capture["complete"],
+                    "file": capture_relpath,
+                })
+            index_path.write_text("".join(json.dumps(row) + "\n" for row in index_rows), encoding="utf-8")
             supplement_url = "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=EXT_ID:10.1093/bioinformatics/btu769&format=json"
             supplement_record = {
                 "source_url": supplement_url,
@@ -175,7 +418,7 @@ class BioinformaticsCaptureTests(unittest.TestCase):
                 "issue": "1",
                 "title": "Achievements and challenges in structural bioinformatics and computational biophysics.",
                 "authors": [{"order": 1, "name": "Ilan Samish"}],
-                "abstract": "A substantive review of structural bioinformatics and computational biophysics.",
+                "abstract": supplement_abstract,
                 "publication_types": publication_types,
                 "dates_as_supplied": {},
                 "pdf_links_as_supplied": [],
@@ -194,6 +437,140 @@ class BioinformaticsCaptureTests(unittest.TestCase):
                 "unresolved": read_output("unresolved.jsonl"),
                 "source_occurrences": read_output("source_occurrences.jsonl"),
                 "supplement_join": read_output("supplement_join_report.jsonl"),
+            }
+
+    def _collect_reviewed_scope_case(
+        self,
+        *,
+        decision: str = "include_research",
+        reason_code: str | None = None,
+        reason: str = "The exact-identity abstract describes an evaluated computational contribution.",
+        title: str = "A reviewed computational research contribution",
+        section: str | None = None,
+        publication_types: list[str] | None = None,
+        abstract: str | None = "We develop a computational method and evaluate it on biological data.",
+        receipt_mutator: Any = None,
+        duplicate_decision: bool = False,
+        review_source_file: str = "scope-reviews/test-review.json",
+        review_source_state: str = "valid",
+    ) -> dict:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_root = Path(temporary)
+            browser_root = run_root / "raw" / "browser"
+            browser_root.mkdir(parents=True)
+            doi = "10.1093/bioinformatics/scope-review-1"
+            source_id = "bioinformatics:990001"
+            landing_url = "https://academic.oup.com/bioinformatics/article/42/1/example/990001"
+            issue_url = ISSUE_URL
+            item = {
+                "landing_url": landing_url,
+                "title": title,
+                "doi": doi,
+                "section": section,
+                "categories": [],
+            }
+            issue_capture = sanitize_capture(make_capture("issue", issue_url, {
+                "year": 2026, "volume": "42", "issue": "1", "items": [item],
+                "pagination": {"next_page_url": None, "terminal_observed": True},
+            }))
+            capture_path = browser_root / "issue.json"
+            capture_path.write_text(json.dumps(issue_capture), encoding="utf-8")
+            index_path = browser_root / "index.jsonl"
+            index_path.write_text(json.dumps({
+                "page_type": "issue", "source_url": issue_url,
+                "observed_at": issue_capture["observed_at"], "complete": True,
+                "file": "raw/browser/issue.json",
+            }) + "\n", encoding="utf-8")
+
+            publication_types = publication_types or ["Journal Article"]
+            epmc_url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=EXT_ID:{doi}&format=json"
+            epmc_record = {
+                "source_url": epmc_url,
+                "observed_at": NOW,
+                "doi": doi,
+                "pmid": "39990001",
+                "journal": {"title": "Bioinformatics", "eissn": "1367-4811", "issn_values": ["1367-4811"]},
+                "matches_target_eissn": True,
+                "within_collection_scope": True,
+                "year_window_margin_only": False,
+                "issue_year": 2026,
+                "volume": "42",
+                "issue": "1",
+                "title": title,
+                "authors": [{"order": 1, "name": "Example, Ada"}],
+                "abstract": abstract,
+                "publication_types": publication_types,
+                "dates_as_supplied": {},
+                "pdf_links_as_supplied": [],
+            }
+            supplement_path = run_root / "supplement" / "normalized_records.jsonl"
+            supplement_path.parent.mkdir()
+            supplement_path.write_text(json.dumps(epmc_record, ensure_ascii=False) + "\n", encoding="utf-8")
+            abstract_sha256 = hashlib.sha256(abstract.encode("utf-8")).hexdigest() if abstract else None
+            row = {
+                "source_native_id": source_id,
+                "doi": doi,
+                "title": title,
+                "landing_url": landing_url,
+                "europe_pmc": {
+                    "source_url": epmc_url,
+                    "observed_at": NOW,
+                    "abstract_sha256": abstract_sha256,
+                    "publication_types": publication_types,
+                },
+                "decision": decision,
+                "reason_code": reason_code or (
+                    "substantive_abstract_tool_or_study" if decision == "include_research" else "front_matter"
+                ),
+                "reason": reason,
+            }
+            if receipt_mutator:
+                receipt_mutator(row)
+            decisions = [row, dict(row)] if duplicate_decision else [row]
+            review_source_bytes = b'{"schema_version":"scope-review-fixture-v1"}\n'
+            source_parts = review_source_file.split("/")
+            safe_relative_source = (
+                not review_source_file.startswith("/")
+                and "\\" not in review_source_file
+                and not any(part in {"", ".", ".."} for part in source_parts)
+            )
+            if safe_relative_source and review_source_state != "missing":
+                source_path = run_root.joinpath(*source_parts)
+                source_path.parent.mkdir(parents=True, exist_ok=True)
+                source_path.write_bytes(
+                    b'{"changed":true}\n' if review_source_state == "drifted" else review_source_bytes
+                )
+            scope_receipt = {
+                "schema_version": SCOPE_DECISION_SCHEMA,
+                "review_source": {
+                    "file": review_source_file,
+                    "sha256": hashlib.sha256(review_source_bytes).hexdigest(),
+                },
+                "reviewed_at_utc": NOW,
+                "abstract_fingerprint_method": SCOPE_DECISION_FINGERPRINT_METHOD,
+                "decisions": decisions,
+            }
+            scope_decisions_path = run_root / "scope-decisions.json"
+            scope_decisions_path.write_text(json.dumps(scope_receipt, ensure_ascii=False), encoding="utf-8")
+
+            stats = collect(
+                index_path,
+                run_root,
+                run_root,
+                supplement_records_path=supplement_path,
+                scope_decisions_path=scope_decisions_path,
+            )
+            read_output = lambda name: [
+                json.loads(line)
+                for line in (run_root / name).read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            return {
+                "stats": stats,
+                "staging": read_output("metadata_staging.jsonl"),
+                "exclusions": read_output("metadata_exclusions.jsonl"),
+                "unresolved": read_output("unresolved.jsonl"),
+                "scope_decision_report": read_output("scope_decision_report.jsonl"),
             }
 
     def test_europe_pmc_publication_type_fallback_is_exact_provenanced_and_oup_subordinate(self) -> None:
@@ -267,6 +644,218 @@ class BioinformaticsCaptureTests(unittest.TestCase):
             "official_article_type_or_issue_section",
         )
 
+    def test_reviewed_scope_receipt_can_include_generic_type_with_independent_provenance(self) -> None:
+        raw_abstract = "We develop a tested method.\n\nWe evaluate  it on biological data."
+        supplied_types = ["Research Support, Non-U.S. Gov't", "Journal Article"]
+        result = self._collect_reviewed_scope_case(abstract=raw_abstract, publication_types=supplied_types)
+        self.assertEqual(len(result["staging"]), 1)
+        staged = result["staging"][0]
+        self.assertEqual(staged["document_type"], "Journal Article")
+        self.assertEqual(staged["europe_pmc_publication_types_as_supplied"], supplied_types)
+        self.assertEqual(
+            staged["field_provenance"]["document_type"]["method"],
+            "Europe_PMC_article_publication_type_as_supplied",
+        )
+        self.assertEqual(
+            staged["field_provenance"]["inclusion_decision"]["method"],
+            "reviewed_exact_identity_title_and_abstract_scope",
+        )
+        self.assertEqual(
+            staged["field_provenance"]["inclusion_decision"]["source_url"],
+            "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=EXT_ID:10.1093/bioinformatics/scope-review-1&format=json",
+        )
+        self.assertEqual(staged["scope_decision_evidence"]["decision"], "include_research")
+        self.assertEqual(staged["scope_decision_evidence"]["reason_code"], "substantive_abstract_tool_or_study")
+        receipt_sha256 = result["scope_decision_report"][0]["review_receipt_sha256"]
+        self.assertRegex(receipt_sha256, r"^[0-9a-f]{64}$")
+        self.assertEqual(staged["scope_decision_evidence"]["review_receipt_sha256"], receipt_sha256)
+        self.assertEqual(staged["field_provenance"]["inclusion_decision"]["review_receipt_sha256"], receipt_sha256)
+        self.assertEqual(
+            staged["scope_decision_evidence"]["europe_pmc"]["abstract_sha256"],
+            hashlib.sha256(raw_abstract.encode("utf-8")).hexdigest(),
+        )
+        self.assertNotEqual(
+            staged["scope_decision_evidence"]["europe_pmc"]["abstract_sha256"],
+            hashlib.sha256(" ".join(raw_abstract.split()).encode("utf-8")).hexdigest(),
+        )
+        self.assertEqual(result["scope_decision_report"][0]["status"], "applied")
+        self.assertFalse(any(row["kind"] == "research_scope_unresolved" for row in result["unresolved"]))
+
+    def test_reviewed_scope_receipt_excludes_individual_front_matter_records(self) -> None:
+        organization = self._collect_reviewed_scope_case(
+            decision="exclude_nonresearch",
+            reason="The exact OUP title identifies conference organization information; the matched API record has no abstract.",
+            title="ECCB 2018 Organization",
+            publication_types=["Journal Article"],
+            abstract=None,
+        )
+        introduction = self._collect_reviewed_scope_case(
+            decision="exclude_nonresearch",
+            reason="The exact OUP conference-introduction title and supplied introductory type identify front matter; no abstract is supplied.",
+            title="ECCB 2018: The 17th European Conference on Computational Biology",
+            publication_types=["Introductory Journal Article"],
+            abstract=None,
+        )
+        for result, expected_type in ((organization, "Journal Article"), (introduction, "Introductory Journal Article")):
+            with self.subTest(document_type=expected_type):
+                self.assertEqual(result["staging"], [])
+                self.assertEqual(len(result["exclusions"]), 1)
+                excluded = result["exclusions"][0]
+                self.assertEqual(excluded["exclusion_reason_code"], "front_matter")
+                self.assertEqual(excluded["document_type"], expected_type)
+                self.assertEqual(excluded["exclusion_evidence"]["classification_method"], "reviewed_exact_identity_title_and_publication_type_scope")
+                self.assertEqual(excluded["scope_decision_evidence"]["decision"], "exclude_nonresearch")
+                self.assertIsNone(excluded["scope_decision_evidence"]["europe_pmc"]["abstract_sha256"])
+                self.assertEqual(
+                    excluded["field_provenance"]["inclusion_decision"]["review_receipt_sha256"],
+                    excluded["scope_decision_evidence"]["review_receipt_sha256"],
+                )
+                self.assertEqual(result["scope_decision_report"][0]["status"], "applied")
+                self.assertEqual(
+                    _validate_exclusion(
+                        excluded,
+                        1,
+                        "bioinformatics",
+                        set(),
+                        {
+                            "academic.oup.com": ["/bioinformatics/"],
+                            "www.ebi.ac.uk": ["/europepmc/webservices/rest/"],
+                        },
+                    ),
+                    [],
+                )
+
+    def test_reviewed_scope_receipt_identity_and_europe_pmc_drift_fail_closed(self) -> None:
+        mutations = {
+            "source ID": lambda row: row.update(source_native_id="bioinformatics:990002"),
+            "unmatched but well-formed source ID": lambda row: row.update(
+                source_native_id="bioinformatics:990002",
+                landing_url="https://academic.oup.com/bioinformatics/article/42/1/example/990002",
+            ),
+            "DOI": lambda row: row.update(doi="10.1093/bioinformatics/scope-review-2"),
+            "OUP title": lambda row: row.update(title="A different title"),
+            "OUP landing URL": lambda row: row.update(landing_url="https://academic.oup.com/bioinformatics/article/42/1/other/990001"),
+            "Europe PMC source URL": lambda row: row["europe_pmc"].update(
+                source_url="https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=EXT_ID:different&format=json"
+            ),
+            "Europe PMC observed time": lambda row: row["europe_pmc"].update(observed_at="2026-10-05T09:00:00Z"),
+            "abstract hash": lambda row: row["europe_pmc"].update(abstract_sha256="0" * 64),
+            "publication types": lambda row: row["europe_pmc"].update(publication_types=["review-article"]),
+            "illegal reason": lambda row: row.update(reason_code="not_a_shared_reason"),
+            "malformed decision": lambda row: row.update(decision=[]),
+        }
+        for field, mutate in mutations.items():
+            with self.subTest(mismatched_binding=field):
+                result = self._collect_reviewed_scope_case(receipt_mutator=mutate)
+                self.assertEqual(result["staging"], [])
+                self.assertEqual(result["exclusions"], [])
+                self.assertEqual(result["scope_decision_report"][0]["status"], "invalid")
+                self.assertEqual(result["stats"]["scope_decisions_invalid"], 1)
+                self.assertIn("scope_decision_invalid", {row["kind"] for row in result["unresolved"]})
+
+        duplicate = self._collect_reviewed_scope_case(duplicate_decision=True)
+        self.assertEqual(duplicate["staging"], [])
+        self.assertEqual([row["status"] for row in duplicate["scope_decision_report"]], ["invalid", "invalid"])
+        self.assertEqual(duplicate["stats"]["scope_decisions_invalid"], 2)
+
+        abstract_missing = self._collect_reviewed_scope_case(abstract=None)
+        self.assertEqual(abstract_missing["staging"], [])
+        self.assertEqual(abstract_missing["exclusions"], [])
+        self.assertEqual(abstract_missing["scope_decision_report"][0]["status"], "invalid")
+        self.assertIn("scope_decision_invalid", {row["kind"] for row in abstract_missing["unresolved"]})
+
+        with self.assertRaisesRegex(ValueError, "evidence-root-relative source file"):
+            self._collect_reviewed_scope_case(review_source_file="/Users/example/private-review.json")
+
+    def test_reviewed_scope_source_manifest_must_exist_match_and_stay_under_evidence_root(self) -> None:
+        for state, expected in (("missing", "missing under evidence_root"), ("drifted", "SHA-256 mismatch")):
+            with self.subTest(source_state=state), self.assertRaisesRegex(ValueError, expected):
+                self._collect_reviewed_scope_case(review_source_state=state)
+        with self.assertRaisesRegex(ValueError, "evidence-root-relative source file"):
+            self._collect_reviewed_scope_case(review_source_file="../outside-review.json")
+
+    def test_reviewed_scope_decision_cannot_override_source_resolved_scope(self) -> None:
+        publisher_include = self._collect_reviewed_scope_case(
+            decision="exclude_nonresearch",
+            reason_code="editorial",
+            section="Original Paper",
+        )
+        self.assertEqual(len(publisher_include["staging"]), 1)
+        self.assertEqual(publisher_include["staging"][0]["document_type"], "Original Paper")
+        self.assertEqual(publisher_include["scope_decision_report"][0]["status"], "already_resolved_by_source")
+        self.assertEqual(publisher_include["scope_decision_report"][0]["source_scope_decision"], "include")
+
+        publisher_exclude = self._collect_reviewed_scope_case(
+            decision="include_research",
+            title="A publisher editorial item",
+            section="Editorial",
+        )
+        self.assertEqual(publisher_exclude["staging"], [])
+        self.assertEqual(publisher_exclude["exclusions"][0]["exclusion_reason_code"], "editorial")
+        self.assertEqual(publisher_exclude["scope_decision_report"][0]["status"], "already_resolved_by_source")
+        self.assertEqual(publisher_exclude["scope_decision_report"][0]["source_scope_decision"], "exclude")
+
+        epmc_explicit = self._collect_reviewed_scope_case(
+            decision="exclude_nonresearch",
+            reason_code="editorial",
+            publication_types=["research-article"],
+        )
+        self.assertEqual(len(epmc_explicit["staging"]), 1)
+        self.assertEqual(epmc_explicit["staging"][0]["document_type"], "research-article")
+        self.assertEqual(epmc_explicit["scope_decision_report"][0]["status"], "already_resolved_by_source")
+
+        epmc_nonresearch = self._collect_reviewed_scope_case(
+            decision="include_research",
+            publication_types=["Editorial"],
+        )
+        self.assertEqual(epmc_nonresearch["staging"], [])
+        self.assertEqual(epmc_nonresearch["exclusions"], [])
+        self.assertIn("research_scope_unresolved", {row["kind"] for row in epmc_nonresearch["unresolved"]})
+        self.assertEqual(epmc_nonresearch["scope_decision_report"][0]["status"], "already_resolved_by_source")
+        self.assertEqual(
+            epmc_nonresearch["scope_decision_report"][0]["scope_review_not_applied_reason"],
+            "explicit Europe PMC nonresearch publication type",
+        )
+
+    def test_missing_abstract_waits_for_a_complete_oup_article_capture(self) -> None:
+        api_only = self._collect_single_europe_pmc_type_case(
+            oup_section="MESSAGE FROM ISCB",
+            publication_types=["research-article"],
+            supplement_abstract=None,
+        )
+        staged = api_only["staging"][0]
+        self.assertIsNone(staged["abstract"])
+        self.assertEqual(
+            staged["missing_fields"]["abstract"]["reason_code"],
+            "oup_article_detail_abstract_check_pending",
+        )
+        self.assertEqual(
+            staged["field_provenance"]["abstract"]["method"],
+            "Europe_PMC_abstract_not_returned; OUP_article_detail_pending",
+        )
+        pending = [row for row in api_only["unresolved"] if row["kind"] == "oup_article_detail_abstract_check_pending"]
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(pending[0]["source_native_id"], "bioinformatics:2366253")
+        self.assertFalse(any(url.startswith("https://academic.oup.com/bioinformatics/article/") for url in staged["missing_fields"]["abstract"]["checked_sources"]))
+        self.assertEqual(
+            staged["missing_fields"]["abstract"]["checked_sources"],
+            ["https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=EXT_ID:10.1093/bioinformatics/btu769&format=json"],
+        )
+
+        checked = self._collect_single_europe_pmc_type_case(
+            oup_section="MESSAGE FROM ISCB",
+            publication_types=["research-article"],
+            supplement_abstract=None,
+            complete_detail_without_abstract=True,
+        )
+        checked_staged = checked["staging"][0]
+        self.assertEqual(
+            checked_staged["missing_fields"]["abstract"]["reason_code"],
+            "not_present_on_official_page",
+        )
+        self.assertEqual(checked_staged["field_provenance"]["abstract"]["method"], "checked_no_abstract")
+        self.assertFalse(any(row["kind"] == "oup_article_detail_abstract_check_pending" for row in checked["unresolved"]))
+
     def test_advance_listing_requires_observed_closed_pagination_chain(self) -> None:
         second_page = ADVANCE_URL + "?page=2"
         self.assertEqual(clean_listing_page_url(second_page), second_page)
@@ -321,12 +910,140 @@ class BioinformaticsCaptureTests(unittest.TestCase):
             "year": 2026, "volume": "42", "issue": "1", "issue_state": None, "items": [],
             "pagination": {"next_page_url": None, "terminal_observed": True},
         }))
-        complete, blockers = _listing_chain_state([issue_first], "issue")
+        complete, blockers = _listing_chain_state([issue_first], "issue", require_navigation_evidence=True)
         self.assertFalse(complete)
         self.assertIn("pagination_next_page_not_captured", {row["kind"] for row in blockers})
-        complete, blockers = _listing_chain_state([issue_first, issue_terminal], "issue")
+        complete, blockers = _listing_chain_state([issue_first, issue_terminal], "issue", require_navigation_evidence=True)
         self.assertTrue(complete)
         self.assertEqual(blockers, [])
+
+        issue_entry_terminal = sanitize_capture(make_capture("issue", ISSUE_URL, {
+            "year": 2026, "volume": "42", "issue": "1", "issue_state": None, "items": [],
+            "pagination": {"next_page_url": None, "terminal_observed": True},
+        }))
+        orphan_page = sanitize_capture(make_capture("issue", issue_page2, {
+            "year": 2026, "volume": "42", "issue": "1", "issue_state": None, "items": [],
+            "pagination": {"next_page_url": None, "terminal_observed": True},
+        }))
+        complete, blockers = _listing_chain_state([issue_entry_terminal, orphan_page], "issue", require_navigation_evidence=True)
+        self.assertFalse(complete)
+        self.assertIn("pagination_page_not_reachable", {row["kind"] for row in blockers})
+
+        issue_cycle_first = sanitize_capture(make_capture("issue", ISSUE_URL, {
+            "year": 2026, "volume": "42", "issue": "1", "issue_state": None, "items": [],
+            "pagination": {"next_page_url": issue_page2, "terminal_observed": False},
+        }))
+        issue_cycle_second = sanitize_capture(make_capture("issue", issue_page2, {
+            "year": 2026, "volume": "42", "issue": "1", "issue_state": None, "items": [],
+            "pagination": {"next_page_url": ISSUE_URL, "terminal_observed": False},
+        }))
+        complete, blockers = _listing_chain_state(
+            [issue_cycle_first, issue_cycle_second], "issue", require_navigation_evidence=True,
+        )
+        self.assertFalse(complete)
+        self.assertIn("pagination_chain_cycle", {row["kind"] for row in blockers})
+
+        cross_issue_link = sanitize_capture(make_capture("issue", ISSUE_URL, {
+            "year": 2026, "volume": "42", "issue": "1", "issue_state": None, "items": [],
+            "pagination": {
+                "next_page_url": "https://academic.oup.com/bioinformatics/issue/42/2?page=2",
+                "terminal_observed": False,
+            },
+        }))
+        complete, blockers = _listing_chain_state(
+            [cross_issue_link], "issue", require_navigation_evidence=True,
+        )
+        self.assertFalse(complete)
+        self.assertIn("pagination_evidence_invalid", {row["kind"] for row in blockers})
+
+        wrong_identity_page = sanitize_capture(make_capture("issue", issue_page2, {
+            "year": 2026, "volume": "42", "issue": "2", "issue_state": None, "items": [],
+            "pagination": {"next_page_url": None, "terminal_observed": True},
+        }))
+        complete, blockers = _listing_chain_state(
+            [issue_first, wrong_identity_page], "issue", require_navigation_evidence=True,
+        )
+        self.assertFalse(complete)
+        self.assertIn("pagination_issue_identity_conflict", {row["kind"] for row in blockers})
+
+    def test_issue_pagination_observes_all_150_plus_29_listing_cards(self) -> None:
+        issue_url = "https://academic.oup.com/bioinformatics/issue/39/1"
+        second_page_url = issue_url + "?page=2"
+
+        def observed_items(start: int, count: int) -> list[dict]:
+            return [
+                {
+                    "landing_url": f"https://academic.oup.com/bioinformatics/article/39/1/item/{source_id}",
+                    "title": f"Observed article {source_id}",
+                    "doi": None,
+                    "section": "Original Paper",
+                }
+                for source_id in range(start, start + count)
+            ]
+
+        first_page = sanitize_capture(make_capture("issue", issue_url, {
+            "year": 2023, "volume": "39", "issue": "1", "issue_state": None,
+            "items": observed_items(100000, 150),
+            "pagination": {"next_page_url": second_page_url, "terminal_observed": False},
+        }))
+        second_page = sanitize_capture(make_capture("issue", second_page_url, {
+            "year": 2023, "volume": "39", "issue": "1", "issue_state": None,
+            "items": observed_items(100150, 29),
+            "pagination": {"next_page_url": None, "terminal_observed": True},
+        }))
+
+        complete, blockers = _listing_chain_state(
+            [first_page, second_page], "issue", require_navigation_evidence=True,
+        )
+        self.assertTrue(complete, blockers)
+        self.assertEqual([len(page["data"]["items"]) for page in (first_page, second_page)], [150, 29])
+        self.assertEqual(
+            len({item["landing_url"] for page in (first_page, second_page) for item in page["data"]["items"]}),
+            179,
+        )
+        incomplete, missing_page_blockers = _listing_chain_state(
+            [first_page], "issue", require_navigation_evidence=True,
+        )
+        self.assertFalse(incomplete)
+        self.assertIn("pagination_next_page_not_captured", {row["kind"] for row in missing_page_blockers})
+
+    def test_issue_without_pagination_stays_useful_for_partial_staging_but_blocks_completeness(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_root = Path(temporary)
+            browser_root = run_root / "raw" / "browser"
+            browser_root.mkdir(parents=True)
+            landing_url = "https://academic.oup.com/bioinformatics/article/42/1/example/990001"
+            item = {
+                "landing_url": landing_url,
+                "title": "A verified research article",
+                "doi": "10.1093/bioinformatics/example990001",
+                "section": "Original Paper",
+            }
+            issue_capture = sanitize_capture(make_capture("issue", ISSUE_URL, {
+                "year": 2026, "volume": "42", "issue": "1", "items": [item],
+                # Intentionally absent: old captures remain partial evidence only.
+            }))
+            detail_capture = sanitize_capture(make_capture("article", landing_url, article_data(
+                item["title"], item["doi"], "Journal Article",
+            )))
+            index_rows = []
+            for index, capture in enumerate((issue_capture, detail_capture)):
+                relative = f"raw/browser/capture-{index}.json"
+                (run_root / relative).write_text(json.dumps(capture), encoding="utf-8")
+                index_rows.append({
+                    "page_type": capture["page_type"], "source_url": capture["source_url"],
+                    "observed_at": capture["observed_at"], "complete": capture["complete"], "file": relative,
+                })
+            index_path = browser_root / "index.jsonl"
+            index_path.write_text("".join(json.dumps(row) + "\n" for row in index_rows), encoding="utf-8")
+            stats = collect(index_path, run_root, run_root)
+            staging = [json.loads(line) for line in (run_root / "metadata_staging.jsonl").read_text().splitlines()]
+            unresolved = [json.loads(line) for line in (run_root / "unresolved.jsonl").read_text().splitlines()]
+
+        self.assertEqual(len(staging), 1)
+        self.assertFalse(stats["issue_pages_complete"])
+        self.assertFalse(stats["enumeration_complete"])
+        self.assertIn("pagination_evidence_missing", {row["kind"] for row in unresolved})
 
     def test_local_capture_server_saves_allowlisted_json_and_index_can_reload_it(self) -> None:
         sample = {
@@ -412,6 +1129,7 @@ class BioinformaticsCaptureTests(unittest.TestCase):
                 "issue": row["issue"],
                 "issue_state": None,
                 "items": [],
+                "pagination": {"next_page_url": None, "terminal_observed": True},
             })))
         captures.append(sanitize_capture(make_capture("advance", ADVANCE_URL, {
             "items": [],
@@ -512,6 +1230,231 @@ class BioinformaticsCaptureTests(unittest.TestCase):
         self.assertEqual(year_count, 1)
         self.assertEqual(volume_count, 1)
 
+    def test_complete_2020_annual_list_uses_only_a_linked_issue_page_dropdown(self) -> None:
+        annual_url = "https://academic.oup.com/bioinformatics/issue-archive/2020"
+        issue_labels = [str(issue) for issue in range(1, 21)] + ["Supplement_1", "Supplement_2", "21", "22-23", "24"]
+        issue_rows = [
+            {
+                "year": 2020,
+                "volume": "36",
+                "issue": label,
+                "url": f"https://academic.oup.com/bioinformatics/issue/36/{label}",
+                "label": f"Volume 36, Issue {label}",
+            }
+            for label in issue_labels
+        ]
+        annual_rows = issue_rows[:22]
+        year_index = sanitize_capture(make_capture("archive", ARCHIVE_URL, {
+            "year_links": [{"year": 2020, "url": annual_url, "label": "2020"}],
+            "issues": [],
+            "directory": {"kind": "year_index", "complete": True},
+        }))
+        annual = sanitize_capture(make_capture("archive", annual_url, {
+            "year_links": [],
+            "issues": annual_rows,
+            "directory": {"kind": "year", "year": 2020, "entry_url": annual_url, "complete": True},
+        }))
+        dropdown_url = "https://academic.oup.com/bioinformatics/issue/36/9"
+
+        def dropdown_capture(rows: list[dict], *, page_url: str = dropdown_url, year: int = 2020, volume: str = "36") -> dict:
+            return sanitize_capture(make_capture("archive", page_url, {
+                "year_links": [],
+                "issues": rows,
+                "directory": {
+                    "kind": "volume", "year": year, "volume": volume,
+                    "entry_url": page_url, "complete": True,
+                },
+            }))
+
+        linked_dropdown = dropdown_capture(issue_rows)
+        archives = [year_index, annual, linked_dropdown]
+        dropdown_source_issue = sanitize_capture(make_capture("issue", dropdown_url, {
+            "year": 2020, "volume": "36", "issue": "9", "items": [],
+            "pagination": {"next_page_url": None, "terminal_observed": True},
+        }))
+        archive_issues, year_links = _archive_issue_map(archives, [dropdown_source_issue])
+        complete, blockers, year_count, _volume_count = _archive_directory_state(
+            archives, {2020}, year_links, archive_issues,
+        )
+        self.assertTrue(complete, blockers)
+        self.assertEqual(len(annual_rows), 22)
+        self.assertEqual(len(issue_rows), 25)
+        self.assertEqual(len(archive_issues), 25)
+        self.assertEqual(year_count, 1)
+
+        unlinked_annual = [row for row in annual_rows if row["issue"] != "9"]
+        unlinked = sanitize_capture(make_capture("archive", annual_url, {
+            "year_links": [],
+            "issues": unlinked_annual,
+            "directory": {"kind": "year", "year": 2020, "entry_url": annual_url, "complete": True},
+        }))
+        unlinked_archives = [year_index, unlinked, linked_dropdown]
+        unlinked_issues, unlinked_year_links = _archive_issue_map(unlinked_archives, [dropdown_source_issue])
+        unlinked_complete, unlinked_blockers, _, _ = _archive_directory_state(
+            unlinked_archives, {2020}, unlinked_year_links, unlinked_issues,
+        )
+        self.assertFalse(unlinked_complete)
+        self.assertIn("archive_directory_year_issue_set_mismatch", {row["kind"] for row in unlinked_blockers})
+
+        mismatched_rows = [dict(row) for row in issue_rows]
+        mismatched_rows[-1]["volume"] = "35"
+        mismatched_dropdown = dropdown_capture(mismatched_rows)
+        mismatched_archives = [year_index, annual, mismatched_dropdown]
+        mismatched_issues, mismatched_year_links = _archive_issue_map(mismatched_archives, [dropdown_source_issue])
+        mismatched_complete, mismatched_blockers, _, _ = _archive_directory_state(
+            mismatched_archives, {2020}, mismatched_year_links, mismatched_issues,
+        )
+        self.assertFalse(mismatched_complete)
+        self.assertIn("archive_directory_volume_dropdown_issue_identity_conflict", {row["kind"] for row in mismatched_blockers})
+
+        # The dropdown contributes expected identities, but every resulting
+        # issue still requires its own complete listing-page capture.
+        missing_issue_url = "https://academic.oup.com/bioinformatics/issue/36/24"
+        all_captures = [year_index, annual, linked_dropdown]
+        for row in issue_rows:
+            if row["url"] == missing_issue_url:
+                continue
+            all_captures.append(sanitize_capture(make_capture("issue", row["url"], {
+                "year": 2020, "volume": "36", "issue": row["issue"], "items": [],
+                "pagination": {"next_page_url": None, "terminal_observed": True},
+            })))
+        with tempfile.TemporaryDirectory() as temporary:
+            run_root = Path(temporary)
+            browser_root = run_root / "raw" / "browser"
+            browser_root.mkdir(parents=True)
+            index_rows = []
+            for index, capture in enumerate(all_captures):
+                relative = f"raw/browser/capture-{index}.json"
+                (run_root / relative).write_text(json.dumps(capture), encoding="utf-8")
+                index_rows.append({
+                    "page_type": capture["page_type"], "source_url": capture["source_url"],
+                    "observed_at": capture["observed_at"], "complete": capture["complete"], "file": relative,
+                })
+            index_path = browser_root / "index.jsonl"
+            index_path.write_text("".join(json.dumps(row) + "\n" for row in index_rows), encoding="utf-8")
+            stats = collect(index_path, run_root, run_root)
+            unresolved = [json.loads(line) for line in (run_root / "unresolved.jsonl").read_text().splitlines()]
+        self.assertEqual(stats["archive_issue_count_in_scope"], 25)
+        self.assertFalse(stats["issue_pages_complete"])
+        self.assertFalse(stats["metadata_complete"])
+        missing_rows = [row for row in unresolved if row["kind"] == "official_issue_pages_not_captured"]
+        self.assertTrue(missing_rows)
+        self.assertIn(missing_issue_url, missing_rows[0]["urls"])
+
+    def test_archive_occurrence_year_and_issue_page_year_are_kept_separate(self) -> None:
+        annual_2020_url = "https://academic.oup.com/bioinformatics/issue-archive/2020"
+        annual_2021_url = "https://academic.oup.com/bioinformatics/issue-archive/2021"
+        issue_2020_url = "https://academic.oup.com/bioinformatics/issue/36/21"
+        issue_2021_url = "https://academic.oup.com/bioinformatics/issue/37/1"
+        shared_issue = {"year": 2020, "volume": "36", "issue": "21", "url": issue_2020_url, "label": "Volume 36, Issue 21"}
+        next_issue_2021 = {"year": 2021, "volume": "37", "issue": "1", "url": issue_2021_url, "label": "Volume 37, Issue 1"}
+        root = sanitize_capture(make_capture("archive", ARCHIVE_URL, {
+            "year_links": [
+                {"year": 2020, "url": annual_2020_url, "label": "2020"},
+                {"year": 2021, "url": annual_2021_url, "label": "2021"},
+            ],
+            "issues": [],
+            "directory": {"kind": "year_index", "complete": True},
+        }))
+        annual_2020 = sanitize_capture(make_capture("archive", annual_2020_url, {
+            "year_links": [], "issues": [shared_issue],
+            "directory": {"kind": "year", "year": 2020, "entry_url": annual_2020_url, "complete": True},
+        }))
+        annual_2021 = sanitize_capture(make_capture("archive", annual_2021_url, {
+            "year_links": [],
+            "issues": [{**shared_issue, "year": 2021}, next_issue_2021],
+            "directory": {"kind": "year", "year": 2021, "entry_url": annual_2021_url, "complete": True},
+        }))
+        captured_issue_2020 = sanitize_capture(make_capture("issue", issue_2020_url, {
+            "year": 2020, "volume": "36", "issue": "21", "items": [],
+            "pagination": {"next_page_url": None, "terminal_observed": True},
+        }))
+        captures = [root, annual_2020, annual_2021]
+        issue_map, year_links = _archive_issue_map(captures, [captured_issue_2020])
+        self.assertEqual(issue_map["/bioinformatics/issue/36/21"]["year"], 2020)
+        self.assertEqual(issue_map["/bioinformatics/issue/36/21"]["identity_source_url"], issue_2020_url)
+        self.assertEqual(
+            {row["year"] for row in issue_map["/bioinformatics/issue/36/21"]["archive_occurrences"]},
+            {2020, 2021},
+        )
+        mismatched_heading = sanitize_capture(make_capture("issue", issue_2020_url, {
+            "year": 2020, "volume": "36", "issue": "22-23", "items": [],
+            "pagination": {"next_page_url": None, "terminal_observed": True},
+        }))
+        with self.assertRaisesRegex(ValueError, "heading does not match"):
+            _archive_issue_map(captures, [mismatched_heading])
+        complete, blockers, _years, _volumes = _archive_directory_state(
+            captures, {2020, 2021}, year_links, issue_map,
+        )
+        self.assertTrue(complete, blockers)
+
+        incomplete, missing_directory_blockers, _, _ = _archive_directory_state(
+            [root, annual_2020], {2020, 2021}, year_links, issue_map,
+        )
+        self.assertFalse(incomplete)
+        self.assertIn("archive_directory_year_not_captured", {row["kind"] for row in missing_directory_blockers})
+
+    def test_dropdown_uses_source_linked_from_prior_archive_year_and_issue_heading_year(self) -> None:
+        annual_2021_url = "https://academic.oup.com/bioinformatics/issue-archive/2021"
+        annual_2022_url = "https://academic.oup.com/bioinformatics/issue-archive/2022"
+        source_issue_url = "https://academic.oup.com/bioinformatics/issue/38/1"
+        row_38_1 = {"year": 2021, "volume": "38", "issue": "1", "url": source_issue_url, "label": "Volume 38, Issue 1"}
+        annual_2022_rows = [
+            {
+                "year": 2022, "volume": "38", "issue": str(issue),
+                "url": f"https://academic.oup.com/bioinformatics/issue/38/{issue}",
+                "label": f"Volume 38, Issue {issue}",
+            }
+            for issue in range(2, 25)
+        ] + [
+            {
+                "year": 2022, "volume": "38", "issue": f"Supplement_{number}",
+                "url": f"https://academic.oup.com/bioinformatics/issue/38/Supplement_{number}",
+                "label": f"Volume 38, Issue Supplement_{number}",
+            }
+            for number in (1, 2)
+        ]
+        dropdown_rows = [{**row_38_1, "year": 2022}, *annual_2022_rows]
+        root = sanitize_capture(make_capture("archive", ARCHIVE_URL, {
+            "year_links": [
+                {"year": 2021, "url": annual_2021_url, "label": "2021"},
+                {"year": 2022, "url": annual_2022_url, "label": "2022"},
+            ],
+            "issues": [], "directory": {"kind": "year_index", "complete": True},
+        }))
+        annual_2021 = sanitize_capture(make_capture("archive", annual_2021_url, {
+            "year_links": [], "issues": [row_38_1],
+            "directory": {"kind": "year", "year": 2021, "entry_url": annual_2021_url, "complete": True},
+        }))
+        annual_2022 = sanitize_capture(make_capture("archive", annual_2022_url, {
+            "year_links": [], "issues": annual_2022_rows,
+            "directory": {"kind": "year", "year": 2022, "entry_url": annual_2022_url, "complete": True},
+        }))
+        dropdown = sanitize_capture(make_capture("archive", source_issue_url, {
+            "year_links": [], "issues": dropdown_rows,
+            "directory": {"kind": "volume", "year": 2022, "volume": "38", "entry_url": source_issue_url, "complete": True},
+        }))
+        source_issue_capture = sanitize_capture(make_capture("issue", source_issue_url, {
+            "year": 2022, "volume": "38", "issue": "1", "items": [],
+            "pagination": {"next_page_url": None, "terminal_observed": True},
+        }))
+        archives = [root, annual_2021, annual_2022, dropdown]
+        issue_map, links = _archive_issue_map(archives, [source_issue_capture])
+        self.assertEqual(issue_map["/bioinformatics/issue/38/1"]["year"], 2022)
+        self.assertEqual(
+            {row["year"] for row in issue_map["/bioinformatics/issue/38/1"]["archive_occurrences"]},
+            {2021, 2022},
+        )
+        complete, blockers, _, _ = _archive_directory_state(archives, {2021, 2022}, links, issue_map)
+        self.assertTrue(complete, blockers)
+
+        without_2022_annual = [root, annual_2021, dropdown]
+        incomplete, incomplete_blockers, _, _ = _archive_directory_state(
+            without_2022_annual, {2021, 2022}, links, issue_map,
+        )
+        self.assertFalse(incomplete)
+        self.assertIn("archive_directory_year_not_captured", {row["kind"] for row in incomplete_blockers})
+
     def test_reviewed_misfiled_issue_needs_actual_anchor_and_captured_identity(self) -> None:
         url = "https://academic.oup.com/bioinformatics/issue/35/15"
         annual_url = "https://academic.oup.com/bioinformatics/issue-archive/2019"
@@ -521,6 +1464,7 @@ class BioinformaticsCaptureTests(unittest.TestCase):
         })
         issue = sanitize_capture(make_capture("issue", url, {
             "year": 2019, "volume": "35", "issue": "15", "items": [],
+            "pagination": {"next_page_url": None, "terminal_observed": True},
         }))
         root = sanitize_capture(make_capture("archive", ARCHIVE_URL, {
             "year_links": [{"year": 2019, "url": annual_url}], "issues": [],
@@ -618,6 +1562,7 @@ class BioinformaticsCaptureTests(unittest.TestCase):
                 })
             captures.append(make_capture("issue", ISSUE_URL, {
                 "year": 2026, "volume": "42", "issue": "1", "issue_state": None, "items": issue_items,
+                "pagination": {"next_page_url": None, "terminal_observed": True},
             }))
             captures.append(make_capture("advance", ADVANCE_URL, {
                 "items": [dict(issue_items[0])],
@@ -676,6 +1621,7 @@ class BioinformaticsCaptureTests(unittest.TestCase):
                 }),
                 make_capture("issue", ISSUE_URL, {
                     "year": 2026, "volume": "42", "issue": "1", "issue_state": None, "items": [issue_item],
+                    "pagination": {"next_page_url": None, "terminal_observed": True},
                 }),
             ]
             rows = []
@@ -749,6 +1695,7 @@ class BioinformaticsCaptureTests(unittest.TestCase):
                 }),
                 make_capture("issue", ISSUE_URL, {
                     "year": 2026, "volume": "42", "issue": "1", "issue_state": None, "items": [issue_item],
+                    "pagination": {"next_page_url": None, "terminal_observed": True},
                 }),
             ]
             rows = []
@@ -888,6 +1835,32 @@ class BioinformaticsCaptureTests(unittest.TestCase):
         self.assertEqual(audit["exact_identifier_candidate_count"], 2)
         self.assertTrue(audit["candidates"][0]["selected"])
         self.assertEqual(audit["selection_rule"], "exact normalized title; exact volume; exact issue")
+
+        oup_title = "GEM: scalable and flexible gene–environment interaction analysis in millions of samples"
+        selected, _, error, audit = _match_europe_pmc(
+            "10.1093/bioinformatics/btab223", None, records,
+            title=oup_title, volume="37", issue="20",
+        )
+        self.assertIsNone(error)
+        self.assertEqual(selected["pmid"], "34695175")
+        self.assertIn("en-dash normalization", audit["selection_rule"])
+        self.assertEqual(audit["metadata_discrepancies"][0]["oup_value"], oup_title)
+        for title, volume, issue in ((oup_title, None, "20"), (oup_title, "37", "19"),
+                                     (oup_title.replace("millions", "billions"), "37", "20")):
+            with self.subTest(title=title, volume=volume, issue=issue):
+                selected, _, error, _ = _match_europe_pmc(
+                    "10.1093/bioinformatics/btab223", None, records,
+                    title=title, volume=volume, issue=issue,
+                )
+                self.assertIsNone(selected)
+                self.assertEqual(error, "exact_identifier_title_conflict")
+        ambiguous_records = records + [{**records[0], "pmid": "99999999"}]
+        selected, _, error, _ = _match_europe_pmc(
+            "10.1093/bioinformatics/btab223", None, ambiguous_records,
+            title=oup_title, volume="37", issue="20",
+        )
+        self.assertIsNone(selected)
+        self.assertEqual(error, "exact_identifier_title_conflict")
 
         btx_records = [
             {
