@@ -15,13 +15,13 @@ python3 scripts/install_database.py --base-url https://github.com/clt20011110/li
 To restore from local release assets instead:
 
 ```bash
-python3 scripts/install_database.py --release-manifest dist/database-release-manifest.json
+python3 scripts/install_database.py --release-manifest dist/v1.1.0/database-release-manifest.json
 ```
 
 When the release is a single archive, this direct form also works:
 
 ```bash
-python3 scripts/install_database.py --archive dist/literature-db-v1.1.0.tar.gz
+python3 scripts/install_database.py --archive dist/v1.1.0/literature-db-v1.1.0.tar.gz
 ```
 
 If Python's configured OpenSSL CA file is missing, the installer can use an installed standard system CA bundle; explicit `SSL_CERT_FILE` and `SSL_CERT_DIR` settings are honored, and TLS verification stays enabled.

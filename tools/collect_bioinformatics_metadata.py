@@ -58,26 +58,42 @@ YEAR_RE = re.compile(r"(?:19|20)\d{2}")
 
 EXCLUDED_TYPE_REASONS = (
     (re.compile(r"\beditorial\b"), "editorial"),
-    (re.compile(r"\bcorrections?\b|\bcorrigendum\b"), "correction"),
-    (re.compile(r"\berratum\b"), "erratum"),
-    (re.compile(r"\bretraction\b"), "retraction"),
+    (re.compile(r"\bcorrections?\b|\bcorrigen(?:dum|da)\b"), "correction"),
+    (re.compile(r"\berrat(?:um|a)\b"), "erratum"),
+    (re.compile(r"\bretract(?:ions?|ed)\b"), "retraction"),
     (re.compile(r"\bfront\s*matter\b|\bfrontmatter\b"), "front_matter"),
     (re.compile(r"\btable\s+of\s+contents\b"), "table_of_contents"),
     (re.compile(r"\bbook\s+review\b"), "book_review"),
     (re.compile(r"\bobituary\b"), "obituary"),
     (re.compile(r"\bannouncement\b"), "announcement"),
+    (re.compile(r"^author\s+index$"), "front_matter"),
+    (re.compile(r"^letters?\s+to\s+(?:the\s+)?editor$"), "letter_to_editor"),
 )
 INCLUDED_TYPE_RE = re.compile(
-    r"\b(original\s+(?:papers?|articles?)|research\s+articles?|"
-    r"applications?\s+notes?|reviews?|review\s+articles?|research\s+supplements?)\b",
+    r"\b(originals?\s+papers?|original\s+articles?|"
+    r"research[\s-]+articles?|applications?\s+notes?|reviews?|"
+    r"review[\s-]+articles?|research\s+supplements?)\b",
     re.I,
 )
+EPMC_EXPLICIT_NONRESEARCH_TYPE_RE = re.compile(
+    r"\b(editorials?|corrections?|corrigendum|corrigenda|errata|erratum|retractions?|"
+    r"letters?|comments?|commentary|commentaries|news(?:\s+items?)?|front\s+matter|"
+    r"table\s+of\s+contents|book\s+reviews?|obituary|obituaries|announcements?)\b",
+    re.I,
+)
+EPMC_SCOPE_FALLBACK_TYPES = {
+    "research-article",
+    "research article",
+    "review-article",
+    "review article",
+    "review",
+}
 EXCLUDED_TITLE_PREFIXES = (
     (re.compile(r"^(?:editorial|editorial note)\s*[:—-]", re.I), "editorial"),
     (re.compile(r"^(?:correction|corrigendum)\s+(?:to|for)\b", re.I), "correction"),
     (re.compile(r"^erratum\s*[:—-]", re.I), "erratum"),
     (re.compile(r"^retraction\s*[:—-]", re.I), "retraction"),
-    (re.compile(r"^(?:table of contents|cover|obituary)\s*$", re.I), "front_matter"),
+    (re.compile(r"^(?:table of contents|cover|obituary|author index)\s*$", re.I), "front_matter"),
 )
 
 CAPTURE_FIELDS = {
@@ -366,10 +382,28 @@ def _load_europe_pmc_records(path: Path | None) -> list[dict[str, Any]]:
             "issue": _clean_string(row.get("issue"), limit=100),
             "pmcid": _clean_string(row.get("pmcid"), limit=100),
             "native_id": row.get("europepmc_native_id") if isinstance(row.get("europepmc_native_id"), dict) else None,
+            "publication_types": [
+                value for value in row.get("publication_types", [])
+                if isinstance(value, str) and value.strip()
+            ] if isinstance(row.get("publication_types"), list) else [],
             "year_window_margin_only": row.get("year_window_margin_only") is True,
             "needs_expected_identity_join_for_scope": exact_identity_scope_candidate,
         })
     return records
+
+
+def _europe_pmc_scope_fallback_type(publication_types: list[str]) -> str | None:
+    """Return an original, explicit Europe PMC research type if it is unconflicted."""
+    if any(
+        classify_scope(value, None)[0] == "exclude"
+        or EPMC_EXPLICIT_NONRESEARCH_TYPE_RE.search(normalize_space(value))
+        for value in publication_types
+    ):
+        return None
+    for value in publication_types:
+        if normalize_space(value).casefold() in EPMC_SCOPE_FALLBACK_TYPES:
+            return value
+    return None
 
 
 def _match_europe_pmc(
@@ -739,7 +773,7 @@ def _sanitize_archive_directory(raw: Any, source_url: str) -> dict[str, Any] | N
         directory["volume"] = volume
         if not volume:
             invalid = True
-    if kind == "year":
+    if kind == "year" and "volume_links" in raw:
         raw_links = raw.get("volume_links")
         if not isinstance(raw_links, list):
             directory["volume_links"] = []
@@ -1038,6 +1072,87 @@ def _capture_signature(capture: dict[str, Any]) -> str:
     )
 
 
+def _reviewed_archive_additions(
+    path: Path | None,
+    evidence_root: Path,
+    captures: list[dict[str, Any]],
+    archive_issues: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Reconcile a missing annual link using a saved official anchor and issue.
+
+    The original link may have been misfiled under another year. Never change
+    that source capture or use API records to invent a missing issue URL.
+    """
+    if path is None:
+        return {}
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if document.get("schema_version") != "bioinformatics-reviewed-archive-additions-v1":
+        raise ValueError("invalid reviewed archive additions schema")
+    decisions = document.get("decisions")
+    if not isinstance(decisions, list):
+        raise ValueError("reviewed archive additions require decisions")
+    additions: dict[str, dict[str, Any]] = {}
+    base = evidence_root.resolve()
+    for decision in decisions:
+        url = clean_listing_page_url(decision.get("issue_url"))
+        reason = _clean_string(decision.get("reason"), limit=2000)
+        if not url or not reason:
+            raise ValueError("reviewed archive addition requires an issue URL and reason")
+        issue_path = urlsplit(url).path
+        route = re.fullmatch(r"/bioinformatics/issue/([0-9]+)/([0-9]+(?:-[0-9]+)?|Supplement_[0-9]+)", issue_path)
+        if route is None or urlsplit(url).query:
+            raise ValueError("reviewed archive addition requires an exact official issue route")
+        if issue_path in archive_issues or issue_path in additions:
+            raise ValueError("reviewed archive addition cannot override an existing issue")
+        reference = decision.get("link_capture", {})
+        raw_path = (base / str(reference.get("file", ""))).resolve()
+        try:
+            raw_path.relative_to(base)
+        except ValueError as exc:
+            raise ValueError("reviewed archive evidence escapes the run directory") from exc
+        raw = raw_path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != reference.get("sha256"):
+            raise ValueError("reviewed archive link evidence checksum mismatch")
+        link_capture = sanitize_capture(json.loads(raw))
+        if link_capture["page_type"] != "archive" or not link_capture["complete"]:
+            raise ValueError("reviewed archive addition requires a complete official link capture")
+        archive_route = re.fullmatch(r"/bioinformatics/issue-archive(?:/([0-9]{4}))?", urlsplit(link_capture["source_url"]).path)
+        if archive_route is None or urlsplit(link_capture["source_url"]).query:
+            raise ValueError("reviewed archive addition requires an official archive route")
+        links = [entry for entry in link_capture["data"]["issues"] if entry["url"] == url]
+        issue_pages = [capture for capture in captures
+                       if capture["page_type"] == "issue" and capture["source_url"] == url
+                       and capture["complete"]]
+        if len(links) != 1 or not issue_pages:
+            raise ValueError("reviewed archive addition needs an observed anchor and captured issue")
+        if archive_route.group(1) and links[0].get("year") != int(archive_route.group(1)):
+            raise ValueError("reviewed archive anchor year does not match its annual route")
+        identities = {(page["data"].get("year"), page["data"].get("volume"),
+                       page["data"].get("issue")) for page in issue_pages}
+        if len(identities) != 1:
+            raise ValueError("reviewed archive issue identity is conflicting")
+        year, volume, issue = next(iter(identities))
+        if (not isinstance(year, int) or not SCOPE_START <= year <= datetime.now(timezone.utc).year
+                or not volume or not issue
+                or route.groups() != (volume, issue)
+                or (links[0].get("volume"), links[0].get("issue")) != (volume, issue)):
+            raise ValueError("reviewed archive issue identity does not match the observed anchor")
+        additions[issue_path] = {
+            "url": url, "year": year, "volume": volume, "issue": issue,
+            "source_url": issue_pages[0]["source_url"],
+            "observed_at": max(page["observed_at"] for page in issue_pages),
+            "reviewed_archive_addition": {
+                "reason": reason, "link_capture": reference,
+                "link_source_url": link_capture["source_url"],
+                "link_observed_at": link_capture["observed_at"],
+                "original_link_identity": links[0],
+                "issue_source_url": url,
+                "issue_observed_at": issue_pages[0]["observed_at"],
+            },
+        }
+    return additions
+
+
 def _listing_chain_state(
     captures: list[dict[str, Any]],
     page_type: str,
@@ -1147,8 +1262,14 @@ def _archive_directory_state(
     target_years: set[int],
     year_links: list[dict[str, Any]],
     archive_issues: dict[str, dict[str, Any]],
+    reviewed_additions: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[bool, list[dict[str, Any]], int, int]:
-    """Require a complete year index, each annual directory, and every linked volume directory."""
+    """Require a complete year index and each annual directory's actual issue set.
+
+    Some OUP annual archive pages list every issue/supplement directly. Others
+    may expose volume links first; only then is a complete linked volume
+    directory required. The evidence model must follow the visible page shape.
+    """
     blockers: list[dict[str, Any]] = []
     archive_path = urlsplit(ARCHIVE_URL).path
     directories = [
@@ -1207,80 +1328,96 @@ def _archive_directory_state(
         if len(linked_candidates) != len(complete_candidates):
             blockers.append({"kind": "archive_directory_year_page_not_linked", "year": year})
         year_directories[year] = linked_candidates
+        direct_issue_identities: set[tuple[str, str]] = set()
         volume_link_map: dict[str, set[str]] = {}
-        for _capture, directory in linked_candidates:
-            links = directory.get("volume_links")
-            if not isinstance(links, list):
-                blockers.append({"kind": "archive_directory_volume_links_missing", "year": year})
-                continue
-            for volume_link in links:
-                volume = volume_link.get("volume")
-                url = volume_link.get("url")
+        for capture, directory in linked_candidates:
+            rows = capture["data"].get("issues", [])
+            if any(row.get("year") != year for row in rows):
+                blockers.append({"kind": "archive_directory_year_issue_identity_conflict", "year": year, "source_url": capture["source_url"]})
+            for row in rows:
+                if row.get("url") and row.get("issue"):
+                    direct_issue_identities.add((urlsplit(row["url"]).path, str(row["issue"])))
+            for link in directory.get("volume_links", []):
+                volume = link.get("volume")
+                url = link.get("url")
                 if not isinstance(volume, str) or not volume or not isinstance(url, str):
                     blockers.append({"kind": "archive_directory_volume_link_invalid", "year": year})
                     continue
                 volume_link_map.setdefault(volume, set()).add(url)
-        for volume, urls in sorted(volume_link_map.items()):
-            if len(urls) != 1:
-                blockers.append({"kind": "archive_directory_volume_link_conflict", "year": year, "volume": volume, "urls": sorted(urls)})
-                continue
-            url = next(iter(urls))
-            key = (year, volume, urlsplit(url).path)
-            if key in referenced_volumes:
-                blockers.append({"kind": "archive_directory_duplicate_volume_link", "year": year, "volume": volume})
-                continue
-            referenced_volumes.add(key)
-            volume_dirs = [
-                (volume_capture, volume_directory)
-                for volume_capture, volume_directory in directories
-                if volume_directory.get("kind") == "volume"
-                and volume_directory.get("year") == year
-                and volume_directory.get("volume") == volume
-                and volume_directory.get("entry_url", volume_capture["source_url"]) == url
-            ]
-            if not volume_dirs:
-                blockers.append({"kind": "archive_directory_volume_not_captured", "year": year, "volume": volume, "url": url})
-                continue
-            usable_volume_dirs = [
-                (volume_capture, volume_directory)
-                for volume_capture, volume_directory in volume_dirs
-                if volume_directory.get("complete") is True
-                and not volume_directory.get("invalid_evidence")
-                and volume_capture.get("complete") is True
-            ]
-            if not usable_volume_dirs:
-                blockers.append({"kind": "archive_directory_volume_not_attested_complete", "year": year, "volume": volume, "url": url})
-                continue
-            observed_issue_identities: set[tuple[str, str]] = set()
-            for volume_capture, _volume_directory in usable_volume_dirs:
-                rows = volume_capture["data"].get("issues", [])
-                if any(row.get("year") != year or str(row.get("volume")) != volume for row in rows):
-                    blockers.append({"kind": "archive_directory_volume_issue_identity_conflict", "year": year, "volume": volume, "source_url": volume_capture["source_url"]})
-                for row in rows:
-                    if row.get("url") and row.get("issue"):
-                        observed_issue_identities.add((urlsplit(row["url"]).path, str(row["issue"])))
-            expected_issue_identities = {
-                (path, str(issue["issue"]))
-                for path, issue in archive_issues.items()
-                if issue.get("year") == year and str(issue.get("volume")) == volume and issue.get("issue")
-            }
-            if observed_issue_identities != expected_issue_identities:
-                blockers.append({
-                    "kind": "archive_directory_volume_issue_set_mismatch",
-                    "year": year,
-                    "volume": volume,
-                    "missing_issue_count": len(expected_issue_identities - observed_issue_identities),
-                    "unlinked_issue_count": len(observed_issue_identities - expected_issue_identities),
-                })
+
+        # Direct issue anchors on the annual archive page are authoritative.
+        # If that page instead links to volume directories, require each linked
+        # volume's complete observed issue set and use their union.
+        observed_issue_identities = set(direct_issue_identities)
+        if not observed_issue_identities and volume_link_map:
+            for volume, urls in sorted(volume_link_map.items()):
+                if len(urls) != 1:
+                    blockers.append({"kind": "archive_directory_volume_link_conflict", "year": year, "volume": volume, "urls": sorted(urls)})
+                    continue
+                url = next(iter(urls))
+                key = (year, volume, urlsplit(url).path)
+                referenced_volumes.add(key)
+                volume_dirs = [
+                    (volume_capture, volume_directory)
+                    for volume_capture, volume_directory in directories
+                    if volume_directory.get("kind") == "volume"
+                    and volume_directory.get("year") == year
+                    and volume_directory.get("volume") == volume
+                    and volume_directory.get("entry_url", volume_capture["source_url"]) == url
+                ]
+                if not volume_dirs:
+                    blockers.append({"kind": "archive_directory_volume_not_captured", "year": year, "volume": volume, "url": url})
+                    continue
+                usable_volume_dirs = [
+                    (volume_capture, volume_directory)
+                    for volume_capture, volume_directory in volume_dirs
+                    if volume_directory.get("complete") is True
+                    and not volume_directory.get("invalid_evidence")
+                    and volume_capture.get("complete") is True
+                ]
+                if not usable_volume_dirs:
+                    blockers.append({"kind": "archive_directory_volume_not_attested_complete", "year": year, "volume": volume, "url": url})
+                    continue
+                for volume_capture, _volume_directory in usable_volume_dirs:
+                    rows = volume_capture["data"].get("issues", [])
+                    if any(row.get("year") != year or str(row.get("volume")) != volume for row in rows):
+                        blockers.append({"kind": "archive_directory_volume_issue_identity_conflict", "year": year, "volume": volume, "source_url": volume_capture["source_url"]})
+                    for row in rows:
+                        if row.get("url") and row.get("issue"):
+                            observed_issue_identities.add((urlsplit(row["url"]).path, str(row["issue"])))
+        elif not observed_issue_identities:
+            blockers.append({"kind": "archive_directory_year_issue_links_missing", "year": year})
+
+        # A reviewed misplaced official link supplements this year's actual
+        # annual directory; it never replaces the directory completeness gate.
+        observed_issue_identities.update(
+            (path, str(issue["issue"]))
+            for path, issue in (reviewed_additions or {}).items()
+            if issue.get("year") == year
+        )
+        expected_issue_identities = {
+            (path, str(issue["issue"]))
+            for path, issue in archive_issues.items()
+            if issue.get("year") == year and issue.get("issue")
+        }
+        if observed_issue_identities != expected_issue_identities:
+            blockers.append({
+                "kind": "archive_directory_year_issue_set_mismatch",
+                "year": year,
+                "missing_issue_count": len(expected_issue_identities - observed_issue_identities),
+                "unlinked_issue_count": len(observed_issue_identities - expected_issue_identities),
+            })
 
     for capture, directory in directories:
-        if directory.get("kind") != "volume":
-            continue
-        year = directory.get("year")
-        volume = directory.get("volume")
-        path = urlsplit(capture["source_url"]).path
-        if (year, volume, path) not in referenced_volumes:
-            blockers.append({"kind": "archive_directory_volume_not_linked", "year": year, "volume": volume, "source_url": capture["source_url"]})
+        if directory.get("kind") == "volume":
+            year = directory.get("year")
+            volume = directory.get("volume")
+            entry_path = urlsplit(directory.get("entry_url", capture["source_url"])).path
+            if (year, volume, entry_path) not in referenced_volumes:
+                # A volume dropdown may be observed alongside a complete
+                # annual issue list. It is supplementary and not required in
+                # that directly-listed page shape.
+                continue
 
     # Archive issue anchors are still retained as observed identities. The
     # directories above separately establish that each year's complete list
@@ -1369,11 +1506,16 @@ def collect(
     previous_expected_root: Path | None = None,
     supplement_records_path: Path | None = None,
     crossref_records_path: Path | None = None,
+    archive_additions_path: Path | None = None,
 ) -> dict[str, Any]:
     captures = _load_captures(pages_index, evidence_root)
     supplement_records = _load_europe_pmc_records(supplement_records_path)
     crossref_records = _load_crossref_records(crossref_records_path)
     archive_issues, archive_year_links = _archive_issue_map(captures)
+    reviewed_additions = _reviewed_archive_additions(
+        archive_additions_path, evidence_root, captures, archive_issues,
+    )
+    archive_issues.update(reviewed_additions)
     issue_page_captures = [capture for capture in captures if capture["page_type"] == "issue"]
     issue_captures = {
         urlsplit(capture["source_url"]).path: capture
@@ -1402,6 +1544,7 @@ def collect(
         target_years,
         archive_year_links,
         archive_issues,
+        reviewed_additions,
     )
     archive_issue_years = {item["year"] for item in archive_issues.values()}
     absent_issue_years = sorted(target_years - archive_issue_years)
@@ -1484,6 +1627,12 @@ def collect(
             "matched": bool(supplement),
             "matched_by": supplement_matched_by,
             "supplement_source_url": supplement.get("source_url") if supplement else None,
+            "supplement_observed_at": supplement.get("observed_at") if supplement else None,
+            "europe_pmc_publication_types_as_supplied": supplement.get("publication_types", []) if supplement else [],
+            "europe_pmc_publication_types_provenance": (
+                _prov(supplement["source_url"], supplement["observed_at"], "Europe_PMC_publication_types_as_supplied")
+                if supplement else None
+            ),
             "margin_assisted": bool(supplement and supplement.get("year_window_margin_only")),
             "match_error": supplement_match_error,
             "match_audit": supplement_match_audit,
@@ -1662,6 +1811,18 @@ def collect(
                 break
         if not selected_type and type_candidates:
             selected_type, type_source_url, type_observed_at = type_candidates[0]
+        type_method = "official_article_type_or_issue_section"
+        if (
+            classify_scope(selected_type, title)[0] == "unresolved"
+            and supplement
+            and not supplement_match_error
+        ):
+            fallback_type = _europe_pmc_scope_fallback_type(supplement.get("publication_types", []))
+            if fallback_type:
+                selected_type = fallback_type
+                type_source_url = supplement["source_url"]
+                type_observed_at = supplement["observed_at"]
+                type_method = "Europe_PMC_publication_types_scope_fallback"
         title_source_url = detail["source_url"] if detail.get("title") else chosen["enumeration_source_url"]
         title_time = detail["observed_at"] if detail.get("title") else chosen["enumeration_observed_at"]
         authors = detail.get("authors") or (supplement.get("authors") if supplement else []) or []
@@ -1751,9 +1912,17 @@ def collect(
                     "source_native_id": _prov(chosen["enumeration_source_url"], list_time, "official_issue_or_advance_article_link"),
                     "title": _prov(title_source_url, title_time, "official_citation_title" if detail.get("title") else "official_issue_listing_title"),
                     "year": _prov(year_url, year_time, year_method),
+                    "document_type": _prov(type_source_url, type_observed_at, type_method),
                     "inclusion_decision": _prov(type_source_url, type_observed_at, "explicit_nonresearch_scope_rule"),
                     "exclusion_reason_code": _prov(type_source_url, type_observed_at, "explicit_editorial_correction_or_frontmatter_type"),
+                    **({
+                        "europe_pmc_publication_types": _prov(
+                            supplement["source_url"], supplement["observed_at"],
+                            "Europe_PMC_publication_types_as_supplied",
+                        )
+                    } if supplement else {}),
                 },
+                "europe_pmc_publication_types_as_supplied": supplement.get("publication_types", []) if supplement else [],
             })
             accounted_ids.add(canonical_id)
             continue
@@ -1788,7 +1957,13 @@ def collect(
             "title": _prov(title_source_url, title_time, "official_citation_title" if title_source_url == detail_url else "official_issue_listing_title"),
             "authors": _prov(authors_source_url, authors_observed_at, "ordered_citation_author_metadata" if detail.get("authors") else "Europe_PMC_ordered_authors"),
             "year": _prov(year_url, year_time, year_method),
-            "document_type": _prov(type_source_url, type_observed_at, "official_article_type_or_issue_section"),
+            "document_type": _prov(type_source_url, type_observed_at, type_method),
+            **({
+                "europe_pmc_publication_types": _prov(
+                    supplement["source_url"], supplement["observed_at"],
+                    "Europe_PMC_publication_types_as_supplied",
+                )
+            } if supplement else {}),
             "landing_url": _prov(chosen["enumeration_source_url"], list_time, "observed_official_article_anchor"),
             "abstract": _prov(abstract_source_url, abstract_observed_at, abstract_source_method),
             "doi": _prov(doi_source_url, doi_time, "official_citation_doi" if detail.get("doi") or dois else "Europe_PMC_DOI" if doi_from_supplement else "checked_absent_doi"),
@@ -1841,6 +2016,7 @@ def collect(
             "authors": authors,
             "abstract": abstract,
             "document_type": selected_type,
+            "europe_pmc_publication_types_as_supplied": supplement.get("publication_types", []) if supplement else [],
             "publication_date": publication_date,
             "publication_date_precision": publication_date_precision,
             "visible_publication_date": detail.get("visible_publication_date"),
@@ -1904,6 +2080,7 @@ def collect(
     collection_complete = enumeration_complete and not unresolved and all_enumerated_ids <= accounted_ids
 
     output_root.mkdir(parents=True, exist_ok=True)
+    write_jsonl(output_root / "archive_additions_report.jsonl", list(reviewed_additions.values()))
     expected_root = output_root / "expected"
     expected_root.mkdir(parents=True, exist_ok=True)
     for previous_file in expected_root.glob("*.jsonl"):
@@ -1954,6 +2131,7 @@ def collect(
         "metadata_complete": collection_complete,
         "requested_years": [SCOPE_START, datetime.now(timezone.utc).year],
         "archive_issue_count_in_scope": len(archive_issues),
+        "reviewed_archive_addition_count": len(reviewed_additions),
         "archive_year_directories_captured": archive_year_directory_count,
         "archive_volume_directories_captured": archive_volume_directory_count,
         "archive_directories_complete": archive_directories_complete,
@@ -1998,6 +2176,7 @@ def build_parser() -> argparse.ArgumentParser:
     collect_parser.add_argument("--previous-expected-root", type=Path)
     collect_parser.add_argument("--supplement-records", type=Path, help="normalized Europe PMC JSONL for exact-identifier field supplementation")
     collect_parser.add_argument("--crossref-records", type=Path, help="normalized Crossref JSONL for exact-DOI published-online/VOR metadata supplementation")
+    collect_parser.add_argument("--archive-additions", type=Path, help="reviewed missing annual links backed by saved official anchors and captured issue identities")
     return parser
 
 
@@ -2014,6 +2193,7 @@ def main() -> int:
             args.previous_expected_root,
             args.supplement_records,
             args.crossref_records,
+            args.archive_additions,
         )
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(json.dumps({"status": "FAIL", "error": str(exc)}, ensure_ascii=False))
