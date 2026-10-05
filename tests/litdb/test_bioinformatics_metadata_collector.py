@@ -177,7 +177,14 @@ class BioinformaticsCaptureTests(unittest.TestCase):
             with self.subTest(research_title=title):
                 self.assertEqual(classify_scope("Original Paper", title), ("include", None))
         self.assertEqual(classify_scope("Awards Papers", "An efficient sequence alignment algorithm"), ("unresolved", None))
-        self.assertEqual(classify_scope("ISCB/ISMB 2022", "ISMB 2022 proceedings"), ("unresolved", None))
+        self.assertEqual(classify_scope("ISCB/ISMB 2022", "ISMB 2022 proceedings"), ("exclude", "front_matter"))
+        self.assertEqual(classify_scope(None, "ISMB 2017 proceedings"), ("exclude", "front_matter"))
+        self.assertEqual(classify_scope(None, "ISMB/ECCB 2017 proceedings"), ("exclude", "front_matter"))
+        self.assertEqual(classify_scope(None, "ISMB 2017 proceedings: selected papers"), ("unresolved", None))
+        self.assertEqual(
+            classify_scope("Original Paper", "ISMB/ECCB 2017 proceedings: a specific graph method"),
+            ("include", None),
+        )
 
     def test_eccb_conference_parent_includes_research_and_preserves_child_exclusions(self) -> None:
         parent = "ECCB 2016: The 15th European Conference on Computational Biology"
@@ -604,6 +611,166 @@ class BioinformaticsCaptureTests(unittest.TestCase):
                 "scope_decision_report": read_output("scope_decision_report.jsonl"),
             }
 
+    def _collect_publisher_reviewed_scope_case(
+        self,
+        *,
+        title: str = "SNP-SIG 2013: the state of the art of genomic variant interpretation",
+        doi: str = "10.1093/bioinformatics/btu415",
+        landing_url: str = "https://academic.oup.com/bioinformatics/article/31/3/449/2364825",
+        section: str | None = "MESSAGE FROM THE ISCB",
+        publication_types: list[str] | None = None,
+        article_complete: bool = True,
+        capture_override: str | None = None,
+        row_mutator: Any = None,
+        receipt_mutator: Any = None,
+    ) -> dict:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_root = Path(temporary)
+            browser_root = run_root / "raw" / "browser"
+            browser_root.mkdir(parents=True)
+            source_id = article_native_id(landing_url)
+            issue_parts = landing_url.split("/article/")[1].split("/")
+            volume, issue = issue_parts[0], issue_parts[1]
+            year = 2015 if volume == "31" else 2017 if volume == "33" else 2026
+            issue_url = f"https://academic.oup.com/bioinformatics/issue/{volume}/{issue}"
+            issue_capture = sanitize_capture(make_capture("issue", issue_url, {
+                "year": year, "volume": volume, "issue": issue,
+                "items": [{
+                    "landing_url": landing_url,
+                    "title": title,
+                    "doi": doi,
+                    "citation": f"Bioinformatics, Volume {volume}, Issue {issue}, {year}",
+                    "section": section,
+                    "categories": [],
+                }],
+                "pagination": {"next_page_url": None, "terminal_observed": True},
+            }))
+            article_capture = sanitize_capture(make_capture("article", landing_url, {
+                **article_data(title, doi, None, authors=["Example, Ada"]),
+                "abstract": "A visible publisher article abstract." if article_complete else None,
+            }, complete=article_complete))
+
+            captures: list[tuple[str, dict[str, Any]]] = []
+            for value in (issue_capture, article_capture):
+                serialized = (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+                capture_sha = hashlib.sha256(serialized).hexdigest()
+                relative_file = f"raw/browser/{capture_sha}.json"
+                (run_root / relative_file).write_bytes(serialized)
+                captures.append((relative_file, {
+                    "capture_id": capture_sha,
+                    "file": relative_file,
+                    "page_type": value["page_type"],
+                    "source_url": value["source_url"],
+                    "observed_at": value["observed_at"],
+                    "complete": value["complete"],
+                }))
+            index_path = browser_root / "index.jsonl"
+            index_path.write_text("".join(json.dumps(row) + "\n" for _, row in captures), encoding="utf-8")
+            issue_file, _issue_index = captures[0]
+            article_file, article_index = captures[1]
+            capture_file = issue_file if capture_override == "issue" else capture_override or article_file
+            capture_sha = next(row["capture_id"] for file, row in captures if file == capture_file)
+            decision_row = {
+                "source_native_id": source_id,
+                "doi": doi,
+                "title": title,
+                "landing_url": landing_url,
+                "publisher_capture": {
+                    "file": capture_file,
+                    "sha256": capture_sha,
+                    "source_url": landing_url,
+                    "observed_at": article_index["observed_at"],
+                },
+                "decision": "exclude_nonresearch",
+                "reason_code": "society_information",
+                "reason": "The observed publisher body is a meeting or community report rather than a research article.",
+            }
+            if row_mutator:
+                row_mutator(decision_row)
+            review_source_row = {
+                "source_native_id": source_id,
+                "doi": doi,
+                "title": title,
+                "landing_url": landing_url,
+                "publisher_capture_file": decision_row["publisher_capture"]["file"],
+                "publisher_capture_sha256": decision_row["publisher_capture"]["sha256"],
+                "publisher_capture_observed_at": decision_row["publisher_capture"]["observed_at"],
+                "decision": decision_row["decision"],
+                "reason_code": decision_row["reason_code"],
+                "reason": decision_row["reason"],
+                "publisher_observation": {
+                    "source_url": landing_url,
+                    "source_capture_id": decision_row["publisher_capture"]["sha256"],
+                },
+            }
+            source_path = run_root / "scope-reviews" / "publisher-source.json"
+            source_path.parent.mkdir(parents=True)
+            source_bytes = (json.dumps({"publisher_reviews": [review_source_row]}, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+            source_path.write_bytes(source_bytes)
+            if receipt_mutator:
+                receipt_mutator(decision_row)
+            scope_receipt = {
+                "schema_version": SCOPE_DECISION_SCHEMA,
+                "review_source": {
+                    "file": "scope-reviews/publisher-source.json",
+                    "sha256": hashlib.sha256(source_bytes).hexdigest(),
+                },
+                "reviewed_at_utc": NOW,
+                "abstract_fingerprint_method": SCOPE_DECISION_FINGERPRINT_METHOD,
+                "decisions": [decision_row],
+            }
+            scope_decisions_path = run_root / "scope-decisions.json"
+            scope_decisions_path.write_text(json.dumps(scope_receipt, ensure_ascii=False), encoding="utf-8")
+
+            supplement_path = None
+            if publication_types is not None:
+                epmc_url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=EXT_ID:{doi}&format=json"
+                epmc_record = {
+                    "source_url": epmc_url,
+                    "observed_at": NOW,
+                    "doi": doi,
+                    "pmid": "39990002",
+                    "journal": {"title": "Bioinformatics", "eissn": "1367-4811", "issn_values": ["1367-4811"]},
+                    "matches_target_eissn": True,
+                    "within_collection_scope": True,
+                    "year_window_margin_only": False,
+                    "issue_year": year,
+                    "volume": volume,
+                    "issue": issue,
+                    "title": title,
+                    "authors": [],
+                    "abstract": None,
+                    "publication_types": publication_types,
+                    "dates_as_supplied": {},
+                    "pdf_links_as_supplied": [],
+                }
+                supplement_path = run_root / "supplement" / "normalized_records.jsonl"
+                supplement_path.parent.mkdir()
+                supplement_path.write_text(json.dumps(epmc_record) + "\n", encoding="utf-8")
+
+            stats = collect(
+                index_path,
+                run_root,
+                run_root,
+                supplement_records_path=supplement_path,
+                scope_decisions_path=scope_decisions_path,
+            )
+            read_output = lambda name: [
+                json.loads(line) for line in (run_root / name).read_text(encoding="utf-8").splitlines() if line.strip()
+            ]
+            return {
+                "stats": stats,
+                "staging": read_output("metadata_staging.jsonl"),
+                "exclusions": read_output("metadata_exclusions.jsonl"),
+                "unresolved": read_output("unresolved.jsonl"),
+                "scope_decision_report": read_output("scope_decision_report.jsonl"),
+                "issue_capture_file": issue_file,
+                "article_capture_file": article_file,
+                "article_capture_sha256": article_index["capture_id"],
+                "article_capture_observed_at": article_index["observed_at"],
+                "review_source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+            }
+
     def test_europe_pmc_publication_type_fallback_is_exact_provenanced_and_oup_subordinate(self) -> None:
         real_btu769 = self._collect_single_europe_pmc_type_case(
             oup_section="MESSAGE FROM ISCB",
@@ -848,6 +1015,145 @@ class BioinformaticsCaptureTests(unittest.TestCase):
             "explicit Europe PMC nonresearch publication type",
         )
 
+    def test_publisher_article_content_review_excludes_without_europe_pmc_or_overriding_oup_type(self) -> None:
+        no_epmc = self._collect_publisher_reviewed_scope_case()
+        self.assertEqual(no_epmc["staging"], [])
+        self.assertEqual(len(no_epmc["exclusions"]), 1)
+        excluded = no_epmc["exclusions"][0]
+        self.assertEqual(excluded["exclusion_reason_code"], "society_information")
+        self.assertEqual(excluded["document_type"], "MESSAGE FROM THE ISCB")
+        self.assertEqual(
+            excluded["scope_decision_evidence"]["method"],
+            "reviewed_exact_identity_publisher_article_content_scope",
+        )
+        self.assertNotIn("abstract_fingerprint_method", excluded["scope_decision_evidence"])
+        capture_binding = excluded["scope_decision_evidence"]["publisher_capture"]
+        self.assertEqual(capture_binding["source_url"], excluded["landing_url"])
+        self.assertEqual(capture_binding["file"], no_epmc["article_capture_file"])
+        self.assertEqual(capture_binding["sha256"], no_epmc["article_capture_sha256"])
+        self.assertEqual(capture_binding["observed_at"], no_epmc["article_capture_observed_at"])
+        self.assertEqual(
+            excluded["scope_decision_evidence"]["review_source"]["sha256"],
+            no_epmc["review_source_sha256"],
+        )
+        self.assertEqual(
+            excluded["field_provenance"]["inclusion_decision"]["source_url"],
+            excluded["landing_url"],
+        )
+        self.assertEqual(no_epmc["scope_decision_report"][0]["evidence_basis"], "publisher_article_capture")
+        self.assertEqual(no_epmc["scope_decision_report"][0]["status"], "applied")
+        self.assertEqual(
+            _validate_exclusion(
+                excluded,
+                1,
+                "bioinformatics",
+                set(),
+                {"academic.oup.com": ["/bioinformatics/"]},
+            ),
+            [],
+        )
+
+        generic_research_api = self._collect_publisher_reviewed_scope_case(
+            title=(
+                "The International Society for Computational Biology and WikiProject Computational Biology: "
+                "celebrating 10 years of collaboration towards open access"
+            ),
+            doi="10.1093/bioinformatics/btx388",
+            landing_url="https://academic.oup.com/bioinformatics/article/33/15/2429/3870481",
+            section="MESSAGE FROM THE ISCB",
+            publication_types=["research-article", "Journal Article"],
+        )
+        self.assertEqual(generic_research_api["staging"], [])
+        self.assertEqual(len(generic_research_api["exclusions"]), 1)
+        api_exclusion = generic_research_api["exclusions"][0]
+        self.assertEqual(api_exclusion["exclusion_reason_code"], "society_information")
+        self.assertEqual(api_exclusion["document_type"], "research-article")
+        self.assertNotEqual(api_exclusion["document_type"], "society_information")
+        self.assertEqual(
+            api_exclusion["field_provenance"]["document_type"]["method"],
+            "Europe_PMC_publication_types_scope_fallback",
+        )
+        self.assertEqual(api_exclusion["scope_decision_evidence"]["publisher_capture"]["source_url"], api_exclusion["landing_url"])
+        self.assertEqual(generic_research_api["scope_decision_report"][0]["status"], "applied")
+
+        explicit_oup_research = self._collect_publisher_reviewed_scope_case(
+            section="Original Paper",
+        )
+        self.assertEqual(len(explicit_oup_research["staging"]), 1)
+        self.assertEqual(explicit_oup_research["exclusions"], [])
+        self.assertEqual(
+            explicit_oup_research["scope_decision_report"][0]["status"],
+            "already_resolved_by_source",
+        )
+        self.assertEqual(
+            explicit_oup_research["scope_decision_report"][0]["source_scope_decision"],
+            "include",
+        )
+
+        explicit_api_nonresearch = self._collect_publisher_reviewed_scope_case(
+            publication_types=["Editorial", "Journal Article"],
+        )
+        self.assertEqual(explicit_api_nonresearch["exclusions"], [])
+        self.assertEqual(
+            explicit_api_nonresearch["scope_decision_report"][0]["status"],
+            "already_resolved_by_source",
+        )
+        self.assertEqual(
+            explicit_api_nonresearch["scope_decision_report"][0]["scope_review_not_applied_reason"],
+            "explicit Europe PMC nonresearch publication type",
+        )
+        self.assertIn(
+            "research_scope_unresolved",
+            {row["kind"] for row in explicit_api_nonresearch["unresolved"]},
+        )
+
+    def test_publisher_article_review_capture_binding_fails_closed(self) -> None:
+        row_mutations = {
+            "source ID": lambda row: row.update(source_native_id="bioinformatics:2364826"),
+            "DOI": lambda row: row.update(doi="10.1093/bioinformatics/other"),
+            "title": lambda row: row.update(title="Different publisher title"),
+            "landing URL": lambda row: row.update(
+                landing_url="https://academic.oup.com/bioinformatics/article/31/3/450/2364825"
+            ),
+            "capture SHA": lambda row: row["publisher_capture"].update(sha256="0" * 64),
+            "capture time": lambda row: row["publisher_capture"].update(observed_at="2026-10-05T09:00:00Z"),
+            "capture URL": lambda row: row["publisher_capture"].update(
+                source_url="https://academic.oup.com/bioinformatics/article/31/3/450/2364825"
+            ),
+            "escaping capture path": lambda row: row["publisher_capture"].update(file="../raw/browser/article.json"),
+        }
+        for label, mutate in row_mutations.items():
+            with self.subTest(binding=label):
+                result = self._collect_publisher_reviewed_scope_case(row_mutator=mutate)
+                self.assertEqual(result["exclusions"], [])
+                self.assertEqual(result["scope_decision_report"][0]["status"], "invalid")
+                self.assertIn("scope_decision_invalid", {row["kind"] for row in result["unresolved"]})
+
+        source_tamper = self._collect_publisher_reviewed_scope_case(
+            receipt_mutator=lambda row: row.update(reason="changed after the immutable source manifest was written"),
+        )
+        self.assertEqual(source_tamper["exclusions"], [])
+        self.assertEqual(source_tamper["scope_decision_report"][0]["status"], "invalid")
+        self.assertTrue(any(
+            "immutable review_source" in error
+            for error in source_tamper["scope_decision_report"][0]["validation_errors"]
+        ))
+
+        incomplete = self._collect_publisher_reviewed_scope_case(article_complete=False)
+        self.assertEqual(incomplete["exclusions"], [])
+        self.assertEqual(incomplete["scope_decision_report"][0]["status"], "invalid")
+        self.assertTrue(any(
+            "selected complete exact-identity article capture" in error
+            for error in incomplete["scope_decision_report"][0]["validation_errors"]
+        ))
+
+        not_selected = self._collect_publisher_reviewed_scope_case(capture_override="issue")
+        self.assertEqual(not_selected["exclusions"], [])
+        self.assertEqual(not_selected["scope_decision_report"][0]["status"], "invalid")
+        self.assertTrue(any(
+            "selected complete exact-identity article capture" in error
+            for error in not_selected["scope_decision_report"][0]["validation_errors"]
+        ))
     def test_missing_abstract_waits_for_a_complete_oup_article_capture(self) -> None:
         api_only = self._collect_single_europe_pmc_type_case(
             oup_section="MESSAGE FROM ISCB",

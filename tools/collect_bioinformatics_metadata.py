@@ -64,6 +64,7 @@ SCOPE_DECISION_FINGERPRINT_METHOD = (
 )
 SCOPE_REVIEWED_INCLUSION_METHOD = "reviewed_exact_identity_title_and_abstract_scope"
 SCOPE_REVIEWED_EXCLUSION_METHOD = "reviewed_exact_identity_title_and_publication_type_scope"
+SCOPE_REVIEWED_PUBLISHER_EXCLUSION_METHOD = "reviewed_exact_identity_publisher_article_content_scope"
 SCOPE_DECISION_REASON_CODES = {
     "include_research": frozenset({"substantive_abstract_tool_or_study"}),
     "exclude_nonresearch": frozenset(ALLOWED_EXCLUSION_REASONS),
@@ -115,6 +116,7 @@ EXCLUDED_TITLE_PREFIXES = (
     (re.compile(r"^erratum\s*[:—-]", re.I), "erratum"),
     (re.compile(r"^(?:retraction|retracted)\s*[:—–-]", re.I), "retraction"),
     (re.compile(r"^(?:table of contents|cover|obituary|author index)\s*$", re.I), "front_matter"),
+    (re.compile(r"^ismb(?:/eccb)?\s+(?:19|20)\d{2}\s+proceedings$", re.I), "front_matter"),
     (re.compile(r"^ismb(?:/eccb)?\s+(?:19|20)\d{2}\s+proceedings\s+papers\s+committee$", re.I), "front_matter"),
     (re.compile(
         r"^(?:the\s+)?(?:19|20)\d{2}\s+(?:"
@@ -508,6 +510,10 @@ def _load_scope_decisions(
     if source_sha256 != review_source["sha256"]:
         raise ValueError("reviewed scope source file SHA-256 mismatch")
     try:
+        review_source_document = json.loads(source_path_resolved.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        review_source_document = None
+    try:
         reviewed_at = _iso_time(document.get("reviewed_at_utc"))
     except ValueError as exc:
         raise ValueError("reviewed scope decisions require an ISO-8601 review time") from exc
@@ -545,29 +551,6 @@ def _load_scope_decisions(
             or article_native_id(landing_url or "") != source_id
         ):
             errors.append("landing_url must be the exact official article URL for source_native_id")
-        epmc = row.get("europe_pmc")
-        if not isinstance(epmc, dict):
-            epmc = {}
-            errors.append("europe_pmc binding is required")
-        epmc_url = epmc.get("source_url")
-        if not isinstance(epmc_url, str) or clean_europe_pmc_source_url(epmc_url) != epmc_url:
-            errors.append("Europe PMC source_url must be an exact allowlisted API URL")
-        try:
-            _iso_time(epmc.get("observed_at"))
-        except ValueError:
-            errors.append("Europe PMC observed_at is required")
-        abstract_sha256 = epmc.get("abstract_sha256")
-        if abstract_sha256 is not None and (
-            not isinstance(abstract_sha256, str)
-            or not re.fullmatch(r"[0-9a-f]{64}", abstract_sha256)
-        ):
-            errors.append("Europe PMC abstract_sha256 must be null or a lowercase SHA-256")
-        publication_types = epmc.get("publication_types")
-        if (
-            not isinstance(publication_types, list)
-            or any(not isinstance(value, str) or not value.strip() for value in publication_types)
-        ):
-            errors.append("Europe PMC publication_types must be an ordered string array")
         decision = row.get("decision")
         reason_code = row.get("reason_code")
         if not isinstance(decision, str) or decision not in SCOPE_DECISION_REASON_CODES:
@@ -577,6 +560,88 @@ def _load_scope_decisions(
         reason = row.get("reason")
         if not isinstance(reason, str) or not reason.strip():
             errors.append("a non-empty review reason is required")
+        is_publisher_review = "publisher_capture" in row
+        publisher_capture = row.get("publisher_capture") if is_publisher_review else None
+        if is_publisher_review:
+            if decision != "exclude_nonresearch":
+                errors.append("publisher article-content review supports exclusions only")
+            if not isinstance(publisher_capture, dict):
+                publisher_capture = {}
+                errors.append("publisher_capture binding is required")
+            publisher_file = publisher_capture.get("file")
+            publisher_parts = publisher_file.split("/") if isinstance(publisher_file, str) else []
+            if (
+                not isinstance(publisher_file, str)
+                or not publisher_file.strip()
+                or publisher_file.startswith("/")
+                or "\\" in publisher_file
+                or re.match(r"^[A-Za-z]:", publisher_file)
+                or any(part in {"", ".", ".."} for part in publisher_parts)
+            ):
+                errors.append("publisher_capture.file must be evidence-root-relative")
+            capture_sha256 = publisher_capture.get("sha256")
+            if not isinstance(capture_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", capture_sha256):
+                errors.append("publisher_capture.sha256 must be a lowercase SHA-256")
+            capture_url = publisher_capture.get("source_url")
+            if (
+                not isinstance(capture_url, str)
+                or clean_official_url(capture_url) != capture_url
+                or capture_url != landing_url
+            ):
+                errors.append("publisher_capture.source_url must equal the exact OUP article landing URL")
+            try:
+                _iso_time(publisher_capture.get("observed_at"))
+            except ValueError:
+                errors.append("publisher_capture.observed_at is required")
+            source_reviews = (
+                review_source_document.get("publisher_reviews")
+                if isinstance(review_source_document, dict)
+                and isinstance(review_source_document.get("publisher_reviews"), list)
+                else []
+            )
+            review_source_match_count = sum(
+                isinstance(source_review, dict)
+                and source_review.get("source_native_id") == source_id
+                and source_review.get("doi") == doi
+                and source_review.get("title") == title
+                and source_review.get("landing_url") == landing_url
+                and source_review.get("publisher_capture_file") == publisher_file
+                and source_review.get("publisher_capture_sha256") == capture_sha256
+                and source_review.get("publisher_capture_observed_at") == publisher_capture.get("observed_at")
+                and source_review.get("decision") == decision
+                and source_review.get("reason_code") == reason_code
+                and source_review.get("reason") == reason
+                and isinstance(source_review.get("publisher_observation"), dict)
+                and source_review["publisher_observation"].get("source_url") == capture_url
+                and source_review["publisher_observation"].get("source_capture_id") == capture_sha256
+                for source_review in source_reviews
+            )
+            if review_source_match_count != 1:
+                errors.append("publisher review must have one exact binding in the immutable review_source document")
+        else:
+            epmc = row.get("europe_pmc")
+            if not isinstance(epmc, dict):
+                epmc = {}
+                errors.append("europe_pmc binding is required")
+            epmc_url = epmc.get("source_url")
+            if not isinstance(epmc_url, str) or clean_europe_pmc_source_url(epmc_url) != epmc_url:
+                errors.append("Europe PMC source_url must be an exact allowlisted API URL")
+            try:
+                _iso_time(epmc.get("observed_at"))
+            except ValueError:
+                errors.append("Europe PMC observed_at is required")
+            abstract_sha256 = epmc.get("abstract_sha256")
+            if abstract_sha256 is not None and (
+                not isinstance(abstract_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", abstract_sha256)
+            ):
+                errors.append("Europe PMC abstract_sha256 must be null or a lowercase SHA-256")
+            publication_types = epmc.get("publication_types")
+            if (
+                not isinstance(publication_types, list)
+                or any(not isinstance(value, str) or not value.strip() for value in publication_types)
+            ):
+                errors.append("Europe PMC publication_types must be an ordered string array")
 
         report = {
             "scope_decision_index": index,
@@ -584,6 +649,7 @@ def _load_scope_decisions(
             "doi": doi,
             "decision": decision,
             "reason_code": reason_code,
+            "evidence_basis": "publisher_article_capture" if is_publisher_review else "europe_pmc_record",
             "review_source": review_source["file"],
             "review_source_sha256": review_source["sha256"],
             "review_receipt_sha256": receipt_sha256,
@@ -625,6 +691,7 @@ def _scope_review_binding_errors(
     supplement: dict[str, Any] | None,
     supplement_matched_by: str | None,
     supplement_match_error: str | None,
+    publisher_details: list[dict[str, Any]] | None = None,
 ) -> list[str]:
     errors: list[str] = []
     if row.get("source_native_id") != source_native_id:
@@ -635,6 +702,26 @@ def _scope_review_binding_errors(
         errors.append("OUP title binding mismatch")
     if row.get("landing_url") != landing_url:
         errors.append("OUP landing URL binding mismatch")
+    publisher_binding = row.get("publisher_capture")
+    if isinstance(publisher_binding, dict):
+        matches = [
+            detail for detail in (publisher_details or [])
+            if detail.get("complete") is True
+            and detail.get("source_native_id") == source_native_id
+            and detail.get("source_url") == publisher_binding.get("source_url") == landing_url
+            and detail.get("observed_at") == publisher_binding.get("observed_at")
+            and detail.get("_evidence_file") == publisher_binding.get("file")
+            and detail.get("_evidence_sha256") == publisher_binding.get("sha256")
+            and normalize_doi(detail.get("doi")) == row.get("doi")
+            and detail.get("title") == row.get("title")
+        ]
+        if len(source_dois) != 1 or row.get("doi") != source_dois[0]:
+            errors.append("OUP DOI binding mismatch")
+        if len(matches) != 1:
+            errors.append("publisher_capture must identify one selected complete exact-identity article capture")
+        if row.get("decision") != "exclude_nonresearch":
+            errors.append("publisher article-content review supports exclusions only")
+        return errors
     epmc_binding = row.get("europe_pmc", {})
     if (
         not supplement
@@ -661,15 +748,16 @@ def _scope_review_binding_errors(
 
 
 def _scope_review_evidence(document: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
-    return {
+    evidence = {
         "schema_version": document["schema_version"],
         "review_receipt_sha256": document["receipt_sha256"],
         "review_source": document["review_source"],
         "reviewed_at_utc": document["reviewed_at_utc"],
-        "abstract_fingerprint_method": document["abstract_fingerprint_method"],
         "method": (
             SCOPE_REVIEWED_INCLUSION_METHOD
             if row["decision"] == "include_research"
+            else SCOPE_REVIEWED_PUBLISHER_EXCLUSION_METHOD
+            if "publisher_capture" in row
             else SCOPE_REVIEWED_EXCLUSION_METHOD
         ),
         "decision": row["decision"],
@@ -679,8 +767,13 @@ def _scope_review_evidence(document: dict[str, Any], row: dict[str, Any]) -> dic
         "doi": row["doi"],
         "title": row["title"],
         "landing_url": row["landing_url"],
-        "europe_pmc": row["europe_pmc"],
     }
+    if "publisher_capture" in row:
+        evidence["publisher_capture"] = row["publisher_capture"]
+    else:
+        evidence["abstract_fingerprint_method"] = document["abstract_fingerprint_method"]
+        evidence["europe_pmc"] = row["europe_pmc"]
+    return evidence
 
 
 def _europe_pmc_scope_fallback_type(publication_types: list[str]) -> str | None:
@@ -1363,9 +1456,12 @@ def _load_captures(pages_index: Path, evidence_root: Path) -> list[dict[str, Any
             path.relative_to(base)
         except ValueError as exc:
             raise ValueError("capture path escapes the run directory") from exc
-        value = sanitize_capture(json.loads(path.read_text(encoding="utf-8")))
+        raw_capture = path.read_bytes()
+        value = sanitize_capture(json.loads(raw_capture.decode("utf-8")))
         if value["page_type"] != row.get("page_type") or value["source_url"] != row.get("source_url"):
             raise ValueError("capture index does not match saved evidence")
+        value["_evidence_file"] = path.relative_to(base).as_posix()
+        value["_evidence_sha256"] = hashlib.sha256(raw_capture).hexdigest()
         captures.append(value)
     return captures
 
@@ -2001,6 +2097,8 @@ def _article_detail(capture: dict[str, Any]) -> dict[str, Any]:
         "abstract": data.get("abstract"),
         "document_type": data.get("document_type"),
         "pdf_url": data.get("citation_pdf_url"),
+        "_evidence_file": capture.get("_evidence_file"),
+        "_evidence_sha256": capture.get("_evidence_sha256"),
     }
 
 
@@ -2381,6 +2479,7 @@ def collect(
             selected_type, type_source_url, type_observed_at, _decision = resolved_candidate
         if not selected_type and type_candidates:
             selected_type, type_source_url, type_observed_at = type_candidates[0]
+        oup_scope_decision, oup_scope_reason = classify_scope(selected_type, title)
         type_method = "official_article_type_or_issue_section"
         if (
             classify_scope(selected_type, title)[0] == "unresolved"
@@ -2481,6 +2580,7 @@ def collect(
                 supplement=supplement,
                 supplement_matched_by=supplement_matched_by,
                 supplement_match_error=supplement_match_error,
+                publisher_details=details_for_entity,
             )
             if binding_errors:
                 scope_report_row["status"] = "invalid"
@@ -2490,13 +2590,19 @@ def collect(
                     "source_native_id": canonical_id,
                     "reason": "; ".join(binding_errors),
                 })
-            elif decision != "unresolved" or any(
+            elif (
+                oup_scope_decision != "unresolved"
+                if "publisher_capture" in scope_review_row
+                else decision != "unresolved"
+            ) or any(
                 EPMC_EXPLICIT_NONRESEARCH_TYPE_RE.search(normalize_space(value))
                 for value in (supplement.get("publication_types", []) if supplement else [])
             ):
                 scope_report_row["status"] = "already_resolved_by_source"
-                scope_report_row["source_scope_decision"] = decision
-                scope_report_row["source_scope_reason"] = reason
+                source_decision = oup_scope_decision if "publisher_capture" in scope_review_row else decision
+                source_reason = oup_scope_reason if "publisher_capture" in scope_review_row else reason
+                scope_report_row["source_scope_decision"] = source_decision
+                scope_report_row["source_scope_reason"] = source_reason
                 if decision == "unresolved":
                     scope_report_row["scope_review_not_applied_reason"] = "explicit Europe PMC nonresearch publication type"
             else:
@@ -2506,12 +2612,13 @@ def collect(
                     decision, reason = "include", None
                 else:
                     decision, reason = "exclude", scope_review_row["reason_code"]
-                reviewed_api_type = _europe_pmc_type_as_supplied(supplement.get("publication_types", []))
-                if reviewed_api_type:
-                    selected_type = reviewed_api_type
-                    type_source_url = supplement["source_url"]
-                    type_observed_at = supplement["observed_at"]
-                    type_method = "Europe_PMC_article_publication_type_as_supplied"
+                if "publisher_capture" not in scope_review_row:
+                    reviewed_api_type = _europe_pmc_type_as_supplied(supplement.get("publication_types", []))
+                    if reviewed_api_type:
+                        selected_type = reviewed_api_type
+                        type_source_url = supplement["source_url"]
+                        type_observed_at = supplement["observed_at"]
+                        type_method = "Europe_PMC_article_publication_type_as_supplied"
                 scope_report_row["status"] = "applied"
                 scope_report_row["application_decision"] = decision
                 scope_report_row["application_method"] = scope_review_evidence["method"]
@@ -2529,6 +2636,28 @@ def collect(
             list_time = chosen["enumeration_observed_at"]
             source_reason = reason or "non_research_content"
             catalog_reason = _catalog_exclusion_reason(source_reason)
+            publisher_review_used = bool(scope_review_evidence and "publisher_capture" in scope_review_evidence)
+            review_source_url = (
+                scope_review_evidence["publisher_capture"]["source_url"]
+                if publisher_review_used else type_source_url
+            )
+            review_source_time = (
+                scope_review_evidence["publisher_capture"]["observed_at"]
+                if publisher_review_used else type_observed_at
+            )
+            review_provenance = {}
+            if scope_review_evidence:
+                review_provenance = {
+                    "review_reason_code": applied_scope_review["reason_code"],
+                    "review_reason": applied_scope_review["reason"],
+                    "review_source": scope_review_evidence["review_source"]["file"],
+                    "review_source_sha256": scope_review_evidence["review_source"]["sha256"],
+                    "review_receipt_sha256": scope_review_evidence["review_receipt_sha256"],
+                }
+                if publisher_review_used:
+                    review_provenance["publisher_capture"] = scope_review_evidence["publisher_capture"]
+                else:
+                    review_provenance["europe_pmc_abstract_sha256"] = scope_review_evidence["europe_pmc"]["abstract_sha256"]
             exclusions.append({
                 "schema_version": EXCLUSION_SCHEMA,
                 "venue_id": VENUE_ID,
@@ -2540,7 +2669,7 @@ def collect(
                 "volume": chosen.get("volume"),
                 "issue": chosen.get("issue"),
                 "doi": doi,
-                "document_type": selected_type or reason,
+                "document_type": selected_type if publisher_review_used else selected_type or reason,
                 "inclusion_decision": "exclude",
                 "exclusion_reason_code": catalog_reason,
                 "exclusion_reason_detail": (
@@ -2571,21 +2700,14 @@ def collect(
                     "year": _prov(year_url, year_time, year_method),
                     "document_type": _prov(type_source_url, type_observed_at, type_method),
                     "inclusion_decision": _prov(
-                        type_source_url,
-                        type_observed_at,
+                        review_source_url,
+                        review_source_time,
                         scope_review_evidence["method"] if scope_review_evidence else "explicit_nonresearch_scope_rule",
-                        **({
-                            "review_reason_code": applied_scope_review["reason_code"],
-                            "review_reason": applied_scope_review["reason"],
-                            "review_source": scope_review_evidence["review_source"],
-                            "review_source_sha256": scope_review_evidence["review_source"]["sha256"],
-                            "review_receipt_sha256": scope_review_evidence["review_receipt_sha256"],
-                            "europe_pmc_abstract_sha256": scope_review_evidence["europe_pmc"]["abstract_sha256"],
-                        } if scope_review_evidence else {}),
+                        **review_provenance,
                     ),
                     "exclusion_reason_code": _prov(
-                        type_source_url,
-                        type_observed_at,
+                        review_source_url,
+                        review_source_time,
                         scope_review_evidence["method"] if scope_review_evidence else "official_type_or_title_scope_rule",
                         source_exclusion_reason_code=source_reason,
                         catalog_exclusion_reason_code=catalog_reason,
