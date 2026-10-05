@@ -3,7 +3,8 @@
     "nature-portfolio", "cell-press", "science-family", "ieee-xplore", "acm-dl",
     "springer-link", "elsevier-sciencedirect", "pmlr", "acl-anthology",
     "cvf-open-access", "openreview", "aaai-dl", "ijcai-proceedings",
-    "jmlr-family", "jair", "neurips-proceedings", "rss-foundation"
+    "jmlr-family", "jair", "neurips-proceedings", "rss-foundation",
+    "oup-academic"
   ],
   "inheritance_requires_venue_validation": true,
   "family_changes_trigger_drift_review": true

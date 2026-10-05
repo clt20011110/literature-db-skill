@@ -10,10 +10,11 @@ ACCEPTANCE_VERSION = "browser-v2"
 # ICCD and ISCAS were explicitly added to the user's requested EDA scope;
 # Integration, the VLSI Journal was later retired from the executable scope
 # at the user's request. Keep both historical facts in history while
-# validating the current 107-venue / 48-conference registry.
-EXPECTED_VENUES = 107
+# validating the current 108-venue / 48-conference registry. Bioinformatics
+# is the 60th configured journal; its metadata collection is a separate task.
+EXPECTED_VENUES = 108
 EXPECTED_CONFERENCES = 48
-EXPECTED_JOURNALS = 59
+EXPECTED_JOURNALS = 60
 YEAR_FROM = 2015
 
 API_KEY_NAMES = (

@@ -136,7 +136,9 @@ def _hostname_allowed(
         if hostname != domain and not hostname.endswith(f".{domain}"):
             continue
         # Path-scoped approvals apply to the exact host, without URL forms
-        # that a downstream HTTP client could normalize outside the prefix.
+        # that a downstream HTTP client could normalize outside the scope.
+        # A trailing slash means a path prefix; without it, the path must match
+        # exactly (needed for narrow API resource endpoints).
         if hostname != domain or parsed.username or parsed.password:
             return False
         try:
@@ -144,11 +146,20 @@ def _hostname_allowed(
                 return False
         except ValueError:
             return False
-        if any(char in url for char in ("\\", "%")) or any(ord(char) < 32 for char in url):
+        # Percent escapes in a query are routine (for example, encoded
+        # Europe PMC search syntax). Keep path-scoped approvals strict: an
+        # escaped path could be decoded or normalized outside its prefix.
+        if "\\" in url or "%" in parsed.path or any(ord(char) < 32 for char in url):
             return False
-        if any(part in {".", "..", ""} for part in parsed.path.split("/")[1:-1]):
+        path_parts = parsed.path.split("/")
+        if any(part in {".", ".."} for part in path_parts[1:]):
             return False
-        return any(parsed.path.startswith(prefix) for prefix in prefixes)
+        if any(part == "" for part in path_parts[1:-1]):
+            return False
+        return any(
+            parsed.path.startswith(prefix) if prefix.endswith("/") else parsed.path == prefix
+            for prefix in prefixes
+        )
     return True
 
 
@@ -552,9 +563,16 @@ def validate_staging(
         not isinstance(domain, str) or not re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", domain)
         or not isinstance(prefixes, list) or not prefixes
         or any(not isinstance(prefix, str) or not prefix.startswith("/")
-               or not prefix.endswith("/") or prefix == "/"
+               or prefix == "/"
                or any(char in prefix for char in ("%", "\\", "?", "#"))
-               or any(part in {".", "..", ""} for part in prefix.split("/")[1:-1])
+               or any(
+                   part in {".", "..", ""}
+                   for part in (
+                       prefix.split("/")[1:-1]
+                       if prefix.endswith("/")
+                       else prefix.split("/")[1:]
+                   )
+               )
                for prefix in prefixes)
         for domain, prefixes in allowed_path_prefixes.items()
     ):

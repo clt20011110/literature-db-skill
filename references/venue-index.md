@@ -5,6 +5,7 @@ To collect another venue or extend coverage, follow the [扩增 venue 指南](ex
 - [aaai](venues/aaai.md)
 - [acl](venues/acl.md)
 - [asp-dac](venues/asp-dac.md)
+- [bioinformatics](venues/bioinformatics.md) — registered; collection pending
 - [cvpr](venues/cvpr.md)
 - [dac](venues/dac.md)
 - [date](venues/date.md)
@@ -30,4 +31,4 @@ To collect another venue or extend coverage, follow the [扩增 venue 指南](ex
 - [trets](venues/trets.md)
 - [tvlsi](venues/tvlsi.md)
 
-There are 26 venue playbooks and one retired venue playbook. A playbook documents the collection method; completed years and field coverage are established by the database and reconciliation receipts. Registry entries without a playbook require official-source discovery before collection.
+There are 27 venue playbooks and one retired venue playbook. Bioinformatics is registered, with collection and metadata ingestion pending. A playbook documents the collection method; completed years and field coverage are established by the database and reconciliation receipts. Registry entries without a playbook require official-source discovery before collection.

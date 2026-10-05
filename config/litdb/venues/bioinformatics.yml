@@ -1,0 +1,59 @@
+[
+  {
+    "active_from": 1985,
+    "allowed_domains": [
+      "academic.oup.com",
+      "doi.org"
+    ],
+    "allowed_path_prefixes": {
+      "academic.oup.com": [
+        "/bioinformatics/"
+      ],
+      "doi.org": [
+        "/10.1093/bioinformatics/"
+      ],
+      "api.crossref.org": [
+        "/works/doi/10.1093/bioinformatics/btaf647",
+        "/journals/1367-4811/works"
+      ],
+      "europepmc.org": [
+        "/articles/"
+      ],
+      "www.ebi.ac.uk": [
+        "/europepmc/webservices/rest/"
+      ]
+    },
+    "calendar_model": "issue",
+    "canonical_name": "Bioinformatics",
+    "crawl_from": 2015,
+    "eissn": [
+      "1367-4811"
+    ],
+    "exclude_rules": [
+      "editorial",
+      "correction",
+      "front_matter",
+      "news",
+      "retraction",
+      "index"
+    ],
+    "id": "bioinformatics",
+    "main_track_rules": [
+      "official_research_article_types",
+      "original_paper",
+      "application_note",
+      "review",
+      "survey"
+    ],
+    "preferred_entry_hints": [
+      "https://academic.oup.com/bioinformatics/",
+      "https://academic.oup.com/bioinformatics/issue-archive",
+      "https://academic.oup.com/bioinformatics/advance-articles"
+    ],
+    "profiles": [
+      "oup-academic-journal"
+    ],
+    "publisher_family": "oup-academic",
+    "venue_type": "journal"
+  }
+]

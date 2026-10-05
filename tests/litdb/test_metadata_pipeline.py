@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from litdb.db import initialize
 from litdb.io import atomic_json
-from litdb.metadata_pipeline import merge_venue, reconcile_venue, validate_staging
+from litdb.metadata_pipeline import _hostname_allowed, merge_venue, reconcile_venue, validate_staging
 from litdb.paths import LitDBPaths
 from litdb.state import initial_state
 
@@ -164,6 +164,92 @@ class MetadataPipelineTests(unittest.TestCase):
             "raw.githubusercontent.com": ["/mlresearch/v235/", "/mlresearch/v267/"]
         }
         atomic_json(path, venue)
+
+    def test_scoped_source_allows_encoded_query_but_rejects_path_escapes(self) -> None:
+        # Scoped supplementary hosts are approved through path rules alone;
+        # keep hostname-only approvals limited to the venue's primary sources.
+        domains = {"academic.oup.com", "doi.org"}
+        scopes = {"www.ebi.ac.uk": ["/europepmc/webservices/rest/"]}
+        self.assertTrue(
+            _hostname_allowed(
+                "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=ISSN%3A1367-4811%20AND%20PUB_YEAR%3A%5B2014%20TO%202026%5D",
+                domains,
+                scopes,
+            )
+        )
+        for url in (
+            "https://www.ebi.ac.uk/europepmc/webservices/rest/%2e%2e/other",
+            "https://www.ebi.ac.uk/europepmc/webservices/rest/search%2f..%2fother",
+            "https://www.ebi.ac.uk/europepmc/webservices/rest/search\\other?query=x%20y",
+            "https://user@www.ebi.ac.uk/europepmc/webservices/rest/search?query=x%20y",
+            "https://sub.www.ebi.ac.uk/europepmc/webservices/rest/search?query=x%20y",
+            "https://www.ebi.ac.uk:444/europepmc/webservices/rest/search?query=x%20y",
+        ):
+            with self.subTest(url=url):
+                self.assertFalse(_hostname_allowed(url, domains, scopes))
+
+    def test_crossref_scope_is_limited_to_bioinformatics_doi_route(self) -> None:
+        domains = {"academic.oup.com", "doi.org"}
+        scopes = {
+            "api.crossref.org": [
+                "/works/doi/10.1093/bioinformatics/btaf647",
+                "/journals/1367-4811/works",
+            ]
+        }
+        self.assertTrue(
+            _hostname_allowed(
+                "https://api.crossref.org/works/doi/10.1093/bioinformatics/btaf647",
+                domains,
+                scopes,
+            )
+        )
+        self.assertTrue(
+            _hostname_allowed(
+                "https://api.crossref.org/journals/1367-4811/works?filter=from-pub-date:2014-01-01,until-pub-date:2026-12-31",
+                domains,
+                scopes,
+            )
+        )
+        for url in (
+            "https://api.crossref.org/works/doi/10.1093/otherjournal/abc123",
+            "https://api.crossref.org/works/10.1093/bioinformatics/btaf647",
+            "https://api.crossref.org/works?filter=prefix:10.1093/bioinformatics",
+            "https://api.crossref.org/works/doi/10.1093/bioinformatics/btaf647/other",
+            "https://api.crossref.org/journals/1367-4811/works/extra",
+            "https://api.crossref.org/journals/1367-4811/works/..",
+            "https://api.crossref.org/journals/1367-4811/works/.",
+            "https://api.crossref.org/journals/1367-4811//works",
+            "https://api.crossref.org/journals/1367-4811/works%2f..",
+            "https://api.crossref.org/journals/1367-4811/works\n?from=2014",
+            "https://api.crossref.org.evil.example/works/doi/10.1093/bioinformatics/btaf647",
+            "https://user@api.crossref.org/works/doi/10.1093/bioinformatics/btaf647",
+            "https://api.crossref.org:444/works/doi/10.1093/bioinformatics/btaf647",
+        ):
+            with self.subTest(url=url):
+                self.assertFalse(_hostname_allowed(url, domains, scopes))
+
+    def test_exact_crossref_routes_are_accepted_in_staging_configuration(self) -> None:
+        venue_path = self.paths.venues / "tcad.yml"
+        venue = json.loads(venue_path.read_text())
+        venue["allowed_path_prefixes"] = {
+            "api.crossref.org": [
+                "/works/doi/10.1093/bioinformatics/btaf647",
+                "/journals/1367-4811/works",
+            ]
+        }
+        atomic_json(venue_path, venue)
+        record = self.record()
+        record["field_provenance"]["title"]["source_url"] = (
+            "https://api.crossref.org/works/doi/10.1093/bioinformatics/btaf647"
+        )
+        record["field_provenance"]["abstract"]["source_url"] = (
+            "https://api.crossref.org/journals/1367-4811/works?filter=from-pub-date:2014-01-01"
+        )
+        write_gzip_jsonl(self.run / "metadata_staging.jsonl.gz", [record])
+
+        result = validate_staging(self.paths, "tcad", self.run, strict=True)
+
+        self.assertEqual(result["status"], "PASS", result["errors"])
 
     def test_exact_raw_paths_are_validated_before_merge(self) -> None:
         self.allow_scoped_raw_pdfs()

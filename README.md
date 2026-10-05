@@ -57,7 +57,7 @@ python3 tools/litdb.py search stop
 
 默认数据库目录相对于 skill 自身解析，从任意工作目录使用绝对脚本路径也有效。优先级为 `--home` > `LITDB_HOME` > `<skill-root>/data/literature-db`。搜索只读源 catalog，派生 lookup、文本、向量、模型和日志写入 `<db-home>/search/`。
 
-当前 `v1.1.0` 数据集覆盖 26 个 venue。配置 registry 有 107 个候选 venue，不表示这些 venue 全部已经收录。当前字段覆盖见 [数据库快照统计](references/catalog-snapshot.md)。详细采集方式见 [venue 索引](references/venue-index.md)、[采集/增量模式](references/modes.md)、[维护命令](references/maintenance.md)。发行包是冻结的数据快照，各 venue 的实际年份、水位和缺失字段以数据库/manifest 为准。
+当前 `v1.1.0` 数据集覆盖 26 个 venue。源配置 registry 有 108 个候选 venue，包括已注册但尚待采集的 Bioinformatics；候选数量不表示这些 venue 全部已经收录。`v1.1.0` 是未包含该新条目的历史冻结快照，数据库及发行总数保持不变。当前字段覆盖见 [数据库快照统计](references/catalog-snapshot.md)。详细采集方式见 [venue 索引](references/venue-index.md)、[采集/增量模式](references/modes.md)、[维护命令](references/maintenance.md)。各 venue 的实际年份、水位和缺失字段以数据库/manifest 为准。
 
 更新流程：读取对应手册和已有水位 → 枚举官方新增年份/期次 → 提取并保存字段来源 → 校验 staging → 单写入者事务合并（同时写入数据库水位）→ reconciliation 通过后确认完成 → `search index`。公开稳定 HTML/API 可由脚本采集；动态页面和登录依赖页面使用正常授权浏览器。遇到访问限制保存断点，不绕过限制。
 

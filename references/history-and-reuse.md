@@ -14,7 +14,7 @@ The default database is `data/literature-db` inside the resolved skill/repositor
 
 ## Bundled snapshot
 
-The current `v1.1.0` release contains 177,031 canonical papers across 26 venues. It extends the `v1.0.0` snapshot of 127,256 papers across 22 venues with CVPR (21,482), ICCV (8,691), ECCV (9,416), and ACL (10,186); `v1.0.1` was an installer-only fix. Each release is a versioned snapshot, not continuous live coverage. The wider registry has 107 possible venues; most have no collected papers.
+The current `v1.1.0` release contains 177,031 canonical papers across 26 venues. It extends the `v1.0.0` snapshot of 127,256 papers across 22 venues with CVPR (21,482), ICCV (8,691), ECCV (9,416), and ACL (10,186); `v1.0.1` was an installer-only fix. Each release is a versioned snapshot, not continuous live coverage. The source registry now has 108 possible venues; Bioinformatics is registered for collection from 2015 onward but is not part of this historical release. At the time of `v1.1.0`, the registry had 107 entries.
 
 The release manifest and snapshot audit under `data/` record exact counts, checksums and transformations. Database provenance paths referring to the original machine are replaced by archival references; publisher URLs and metadata are retained. Historical raw pages, downloaded files, browser sessions, chat runs and search vectors are not bundled. A `legacy-evidence://` reference is a provenance label, not a downloadable URL. Historical evidence must be supplied separately or replaced with a new observed source before claiming a fresh audit.
 

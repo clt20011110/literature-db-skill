@@ -31,4 +31,4 @@ Read-only packaging check for `v1.1.0` on 2026-10-04. Counts below are canonical
 | trets | 453 | 450 | 453 | 453 |
 | tvlsi | 3,319 | 3,312 | 3,319 | 3,319 |
 
-Total: **177,031 papers across 26 venues**. The four additions in `v1.1.0` contribute 49,775 works to the `v1.0.0` baseline of 127,256 works across 22 venues; `v1.0.1` was an installer-only fix. Missing metadata is preserved with provenance. DOI counts reflect verified stored values, and a blank DOI does not itself mean that a paper lacks a DOI or was omitted. The wider 107-entry registry is separate from this collected coverage.
+Total: **177,031 papers across 26 venues**. The four additions in `v1.1.0` contribute 49,775 works to the `v1.0.0` baseline of 127,256 works across 22 venues; `v1.0.1` was an installer-only fix. Missing metadata is preserved with provenance. DOI counts reflect verified stored values, and a blank DOI does not itself mean that a paper lacks a DOI or was omitted. The 107-entry registry at release time is separate from this collected coverage; the current 108-entry source registry includes Bioinformatics, whose collection is pending.

@@ -327,6 +327,7 @@ VENUE_LABELS = {
     'nature':'Nature', 'nature-methods':'Nature Methods',
     'nature-machine-intelligence':'Nature Machine Intelligence',
     'nature-computational-science':'Nature Computational Science',
+    'bioinformatics':'Bioinformatics',
 }
 STOPWORDS = set('a an the and or to of in for on with from by at as is are be that this it i we how what why can using use used research paper papers study studies want related find about improve new method methods approach based'.split())
 
