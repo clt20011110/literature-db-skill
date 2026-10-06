@@ -66,6 +66,15 @@ SCOPE_REVIEWED_INCLUSION_METHOD = "reviewed_exact_identity_title_and_abstract_sc
 SCOPE_REVIEWED_EXCLUSION_METHOD = "reviewed_exact_identity_title_and_publication_type_scope"
 SCOPE_REVIEWED_PUBLISHER_EXCLUSION_METHOD = "reviewed_exact_identity_publisher_article_content_scope"
 SCOPE_REVIEWED_PUBLISHER_INCLUSION_METHOD = "reviewed_exact_identity_publisher_abstract_scope"
+REVIEWED_DAGGER_TITLE_VARIANT = {
+    "source_native_id": "bioinformatics:6155989",
+    "doi": "10.1093/bioinformatics/btab085",
+    "detail_title": "normalization of single-cell rna-seq counts by log(x + 1)† or log(1 + x)†",
+    "titles": frozenset({
+        "normalization of single-cell rna-seq counts by log(x + 1) or log(1 + x)",
+        "normalization of single-cell rna-seq counts by log(x + 1)† or log(1 + x)†",
+    }),
+}
 SCOPE_DECISION_REASON_CODES = {
     "include_research": frozenset({"substantive_abstract_tool_or_study"}),
     "exclude_nonresearch": frozenset(ALLOWED_EXCLUSION_REASONS),
@@ -2352,7 +2361,11 @@ def collect(
         detail_years = {
             int(match.group(0))
             for detail in group_details
-            for match in [YEAR_RE.search(detail.get("publication_date") or "")]
+            for match in [YEAR_RE.search(
+                detail.get("publication_date")
+                or detail.get("visible_publication_date")
+                or ""
+            )]
             if match
         }
         if not issue_years:
@@ -2369,6 +2382,7 @@ def collect(
                 "volume": item.get("volume"),
                 "issue": item.get("issue"),
                 "landing_url": item["landing_url"],
+                "title": item.get("title"),
             }
             for item in members
         ]
@@ -2382,7 +2396,48 @@ def collect(
             for row in [*members, *group_details]
             if normalize_space(row.get("title") or "")
         })
-        expected_source_items.append({
+        observed_title_values = sorted({
+            normalize_space(row.get("title") or "")
+            for row in [*members, *group_details]
+            if normalize_space(row.get("title") or "")
+        })
+        identity_landing_urls = sorted({
+            row.get("landing_url") or row.get("source_url")
+            for row in [*members, *group_details]
+            if row.get("landing_url") or row.get("source_url")
+        })
+        complete_group_details = [row for row in group_details if row.get("complete") is True]
+        detail_title_values = {
+            normalize_space(row.get("title") or "").casefold()
+            for row in complete_group_details
+            if normalize_space(row.get("title") or "")
+        }
+        canonical_detail_title = next(
+            (row.get("title") for row in complete_group_details if normalize_space(row.get("title") or "")),
+            None,
+        )
+        title_variant_resolution = None
+        if (
+            source_id == REVIEWED_DAGGER_TITLE_VARIANT["source_native_id"]
+            and identity_dois == [REVIEWED_DAGGER_TITLE_VARIANT["doi"]]
+            and set(identity_titles) == REVIEWED_DAGGER_TITLE_VARIANT["titles"]
+            and len(identity_landing_urls) == 1
+            and bool(complete_group_details)
+            and detail_title_values == {REVIEWED_DAGGER_TITLE_VARIANT["detail_title"]}
+        ):
+            title_variant_resolution = {
+                "method": "reviewed_exact_identity_dagger_footnote_title_variant",
+                "reason": (
+                    "The official issue listing and complete article detail share the same native ID, DOI, and landing URL; "
+                    "the only title difference is the two observed dagger footnote markers. The complete article detail title is retained."
+                ),
+                "source_native_id": source_id,
+                "doi": REVIEWED_DAGGER_TITLE_VARIANT["doi"],
+                "landing_url": identity_landing_urls[0],
+                "canonical_title": canonical_detail_title,
+                "observed_titles": observed_title_values,
+            }
+        expected_item = {
             "schema_version": "literature-expected-source-item-v1",
             "venue_id": VENUE_ID,
             "source_native_id": source_id,
@@ -2396,7 +2451,10 @@ def collect(
             "title_values": identity_titles,
             "source_occurrence_count": len(members),
             "source_occurrences": identity_occurrences,
-        })
+        }
+        if title_variant_resolution:
+            expected_item["identity_resolution"] = title_variant_resolution
+        expected_source_items.append(expected_item)
         for expected_year in identity_years:
             if expected_year not in target_years:
                 continue
@@ -2438,7 +2496,7 @@ def collect(
                 "issue_state": item.get("issue_state"),
                 "capture_state": "enumerated",
             })
-        if len(dois) > 1 or len(titles) > 1:
+        if (len(dois) > 1 or len(titles) > 1) and not title_variant_resolution:
             unresolved.append({
                 "kind": "source_identity_collision",
                 "source_native_id": source_id,
@@ -2476,6 +2534,8 @@ def collect(
             year_method = archive_entry.get("identity_method") or "official_archive_volume_year"
         elif detail.get("publication_date"):
             year_url, year_time, year_method = detail["source_url"], detail["observed_at"], "official_advance_publication_date"
+        elif not issue_years and detail.get("visible_publication_date"):
+            year_url, year_time, year_method = detail["source_url"], detail["observed_at"], "official_visible_publication_date"
         elif supplement and supplement.get("issue_year") == year:
             year_url, year_time, year_method = supplement["source_url"], supplement["observed_at"], "Europe_PMC_issue_year_fallback_for_advance_item"
         else:

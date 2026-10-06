@@ -2069,6 +2069,186 @@ class BioinformaticsCaptureTests(unittest.TestCase):
             self.assertEqual(staging[0]["visible_publication_date"], "01 December 2025")
             self.assertEqual(staging[0]["year"], 2026)
 
+    def test_advance_visible_publication_date_supplies_year_without_overriding_issue_year(self) -> None:
+        def collect_case(*, issue_year: int | None) -> tuple[list[dict], list[dict]]:
+            with tempfile.TemporaryDirectory() as temporary:
+                run_root = Path(temporary)
+                browser_root = run_root / "raw" / "browser"
+                browser_root.mkdir(parents=True)
+                doi = "10.1093/bioinformatics/visible-year-test"
+                title = "A computational method with a visible publication date"
+                landing_url = (
+                    "https://academic.oup.com/bioinformatics/article/42/1/visible/990991"
+                    if issue_year is not None
+                    else "https://academic.oup.com/bioinformatics/advance-article/doi/10.1093/bioinformatics/visible-year-test"
+                )
+                item = {
+                    "landing_url": landing_url,
+                    "title": title,
+                    "doi": doi,
+                    "section": "Applications Notes",
+                    "categories": [],
+                }
+                listing_url = (
+                    "https://academic.oup.com/bioinformatics/issue/42/1"
+                    if issue_year is not None else ADVANCE_URL
+                )
+                listing_data = {
+                    "items": [item],
+                    "pagination": {"next_page_url": None, "terminal_observed": True},
+                }
+                if issue_year is not None:
+                    listing_data.update({"year": issue_year, "volume": "42", "issue": "1"})
+                listing_capture = sanitize_capture(make_capture(
+                    "issue" if issue_year is not None else "advance",
+                    listing_url,
+                    listing_data,
+                ))
+                detail_data = article_data(title, doi, "Applications Notes")
+                detail_data["citation_publication_date"] = None
+                detail_data["visible_publication_date"] = "01 December 2025"
+                detail_capture = sanitize_capture(make_capture("article", landing_url, detail_data))
+                rows = []
+                for index, capture in enumerate((listing_capture, detail_capture)):
+                    relative = f"raw/browser/capture-{index}.json"
+                    (run_root / relative).write_text(json.dumps(capture), encoding="utf-8")
+                    rows.append({
+                        "page_type": capture["page_type"],
+                        "source_url": capture["source_url"],
+                        "observed_at": capture["observed_at"],
+                        "complete": capture["complete"],
+                        "file": relative,
+                    })
+                index_path = browser_root / "index.jsonl"
+                index_path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+                collect(index_path, run_root, run_root)
+                staging = [
+                    json.loads(line)
+                    for line in (run_root / "metadata_staging.jsonl").read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                unresolved = [
+                    json.loads(line)
+                    for line in (run_root / "unresolved.jsonl").read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                return staging, unresolved
+
+        advance_staging, advance_unresolved = collect_case(issue_year=None)
+        self.assertEqual(len(advance_staging), 1)
+        advance = advance_staging[0]
+        self.assertEqual(advance["year"], 2025)
+        self.assertIsNone(advance["publication_date"])
+        self.assertEqual(advance["visible_publication_date"], "01 December 2025")
+        self.assertEqual(advance["field_provenance"]["year"], {
+            "source_url": "https://academic.oup.com/bioinformatics/advance-article/doi/10.1093/bioinformatics/visible-year-test",
+            "observed_at": NOW,
+            "method": "official_visible_publication_date",
+        })
+        self.assertNotIn("source_year_unresolved", {row["kind"] for row in advance_unresolved})
+
+        issue_staging, issue_unresolved = collect_case(issue_year=2026)
+        self.assertEqual(len(issue_staging), 1)
+        issue = issue_staging[0]
+        self.assertEqual(issue["year"], 2026)
+        self.assertEqual(issue["visible_publication_date"], "01 December 2025")
+        self.assertNotIn("source_year_unresolved", {row["kind"] for row in issue_unresolved})
+
+    def test_exact_reviewed_dagger_title_variant_resolution_is_narrow_and_audited(self) -> None:
+        listing_title = "Normalization of single-cell RNA-seq counts by log(x + 1) or log(1 + x)"
+        detail_title = "Normalization of single-cell RNA-seq counts by log(x + 1)† or log(1 + x)†"
+        expected_doi = "10.1093/bioinformatics/btab085"
+
+        def collect_case(
+            *,
+            native_id: str = "6155989",
+            doi: str = expected_doi,
+            extra_title: str | None = None,
+            detail_url: str | None = None,
+            detail_complete: bool = True,
+        ) -> tuple[list[dict], list[dict], list[dict]]:
+            with tempfile.TemporaryDirectory() as temporary:
+                run_root = Path(temporary)
+                browser_root = run_root / "raw" / "browser"
+                browser_root.mkdir(parents=True)
+                landing_url = f"https://academic.oup.com/bioinformatics/article/42/1/example/{native_id}"
+                listing_item = {
+                    "landing_url": landing_url,
+                    "title": listing_title,
+                    "doi": doi,
+                    "section": "Original Paper",
+                    "categories": [],
+                }
+                issue_capture = sanitize_capture(make_capture("issue", ISSUE_URL, {
+                    "year": 2026, "volume": "42", "issue": "1", "items": [listing_item],
+                    "pagination": {"next_page_url": None, "terminal_observed": True},
+                }))
+                captures = [issue_capture]
+                if extra_title is not None:
+                    captures.append(sanitize_capture(make_capture("advance", ADVANCE_URL, {
+                        "items": [{**listing_item, "title": extra_title}],
+                        "pagination": {"next_page_url": None, "terminal_observed": True},
+                    })))
+                detail_data = article_data(detail_title, doi, "Journal Article")
+                detail_capture = sanitize_capture(make_capture(
+                    "article", detail_url or landing_url, detail_data, complete=detail_complete,
+                ))
+                captures.append(detail_capture)
+                rows = []
+                for index, capture in enumerate(captures):
+                    relative = f"raw/browser/capture-{index}.json"
+                    (run_root / relative).write_text(json.dumps(capture), encoding="utf-8")
+                    rows.append({
+                        "page_type": capture["page_type"], "source_url": capture["source_url"],
+                        "observed_at": capture["observed_at"], "complete": capture["complete"], "file": relative,
+                    })
+                index_path = browser_root / "index.jsonl"
+                index_path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+                collect(index_path, run_root, run_root)
+                read_output = lambda name: [
+                    json.loads(line)
+                    for line in (run_root / name).read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+                return (
+                    read_output("metadata_staging.jsonl"),
+                    read_output("unresolved.jsonl"),
+                    read_output("expected_source_items.jsonl"),
+                )
+
+        staging, unresolved, expected = collect_case()
+        self.assertEqual(len(staging), 1)
+        self.assertEqual(staging[0]["title"], detail_title)
+        self.assertNotIn("source_identity_collision", {row["kind"] for row in unresolved})
+        reviewed = next(row for row in expected if row["source_native_id"] == "bioinformatics:6155989")
+        self.assertEqual(reviewed["identity_resolution"], {
+            "method": "reviewed_exact_identity_dagger_footnote_title_variant",
+            "reason": (
+                "The official issue listing and complete article detail share the same native ID, DOI, and landing URL; "
+                "the only title difference is the two observed dagger footnote markers. The complete article detail title is retained."
+            ),
+            "source_native_id": "bioinformatics:6155989",
+            "doi": expected_doi,
+            "landing_url": "https://academic.oup.com/bioinformatics/article/42/1/example/6155989",
+            "canonical_title": detail_title,
+            "observed_titles": [listing_title, detail_title],
+        })
+        self.assertEqual({row["title"] for row in reviewed["source_occurrences"]}, {listing_title})
+
+        rejected_cases = (
+            {"native_id": "6155990"},
+            {"doi": "10.1093/bioinformatics/btab086"},
+            {"detail_url": "https://academic.oup.com/bioinformatics/article/42/2/example/6155989"},
+            {"detail_complete": False},
+            {"extra_title": "Normalization of single-cell RNA-seq counts by log(x + 1)‡ or log(1 + x)‡"},
+        )
+        for case in rejected_cases:
+            with self.subTest(case=case):
+                rejected_staging, rejected_unresolved, _ = collect_case(**case)
+                self.assertEqual(rejected_staging, [])
+                collision = next(row for row in rejected_unresolved if row["kind"] == "source_identity_collision")
+                self.assertGreater(len(collision["titles"]), 1)
+
     def test_expected_identity_is_written_before_detail_success(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run_root = Path(temporary)
