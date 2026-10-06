@@ -1,6 +1,6 @@
 # Bundled catalog snapshot
 
-Read-only packaging check for `v1.1.0` on 2026-10-04. Counts below are canonical works (not source items/edition appearances). PDF coverage means a stored PDF location; this check does not download files or test live accessibility. Each venue retains its source observation dates and watermark.
+Historical read-only packaging check for `v1.1.0` on 2026-10-04. The per-venue table below remains the 26-venue historical snapshot; it is not a per-venue audit of the prepared `v1.2.0` snapshot. Counts are canonical works (not source items/edition appearances). PDF coverage means a stored PDF location; this check does not download files or test live accessibility. Each venue retains its source observation dates and watermark.
 
 | Venue | Papers | Abstract | DOI | PDF location |
 |---|---:|---:|---:|---:|
@@ -31,4 +31,8 @@ Read-only packaging check for `v1.1.0` on 2026-10-04. Counts below are canonical
 | trets | 453 | 450 | 453 | 453 |
 | tvlsi | 3,319 | 3,312 | 3,319 | 3,319 |
 
-Total: **177,031 papers across 26 venues**. The four additions in `v1.1.0` contribute 49,775 works to the `v1.0.0` baseline of 127,256 works across 22 venues; `v1.0.1` was an installer-only fix. Missing metadata is preserved with provenance. DOI counts reflect verified stored values, and a blank DOI does not itself mean that a paper lacks a DOI or was omitted. The 107-entry registry at release time is separate from this collected coverage; the current 108-entry source registry includes Bioinformatics, whose collection is pending.
+Total: **177,031 papers across 26 venues** in historical `v1.1.0`. The four additions in `v1.1.0` contribute 49,775 works to the `v1.0.0` baseline of 127,256 works across 22 venues; `v1.0.1` was an installer-only fix. Missing metadata is preserved with provenance. DOI counts reflect verified stored values, and a blank DOI does not itself mean that a paper lacks a DOI or was omitted. The 107-entry registry in `v1.1.0` is separate from that release's collected coverage.
+
+## Prepared v1.2.0 addition
+
+The Bioinformatics accepted-input reconciliation passed with 10,448 catalog source items, 10,127 canonical works, 321 excluded source items, zero duplicates, zero missing or extra items, and zero provenance gaps. The final metadata run has abstracts for 10,125 works and DOI and PDF-link values for all 10,127. Added to the historical v1.1.0 baseline, the prepared snapshot totals **187,158 canonical works across 27 venues**. These counts describe metadata and observed PDF links; they do not imply that article PDFs were downloaded. The v1.2.0 release package is not yet published.
