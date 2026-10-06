@@ -34,7 +34,7 @@
 
 完整字段和默认值以 [registry.py](../tools/litdb/registry.py) 的 `REQUIRED_FIELDS` 和 `_normalize_venue` 为准；`load_source_venues()` 返回规范化后的对象。新增运行配置时只原子写入本次目标条目，并维护 `registry/venue_registry.yml` 的 ID/数量汇总；保留已有条目和 campaign 历史。不要手工向 SQLite 插入 venue 或论文，venue 表由 metadata 合并维护。
 
-**当前实现限制：** `registry validate --strict` 和 `init` 内部的严格安装固定检查 108 个 venue（48 个会议、60 个期刊）。Bioinformatics 已采集、合并并通过严格对账，进入准备发布的 `v1.2.0` 数据快照。历史 `v1.1.0` 发布配置基线为 107 个候选 venue（48 个会议、59 个期刊），该历史发行快照保持原样。
+**当前实现限制：** `registry validate --strict` 和 `init` 内部的严格安装固定检查 108 个 venue（48 个会议、60 个期刊）。Bioinformatics 已采集、合并并通过严格对账，进入 `v1.2.0` 数据快照。历史 `v1.1.0` 发布配置基线为 107 个候选 venue（48 个会议、59 个期刊），该历史发行快照保持原样。
 
 - 已注册 venue 的首次采集不改变这个数量，可以沿用严格校验。
 - 本地新增运行条目时用 `registry validate` 做结构校验；数量超出原始基线不代表新增条目无效。

@@ -2,7 +2,7 @@
 
 一个独立的 Codex 文献 skill：按期刊/会议采集和增量更新官方元数据，在本地检索标题与摘要，并导出检索结果。无需 ARIS 或 API key。
 
-- **v1.2.0 发行目标为 187,158 篇论文、27 个已收录期刊/会议**；Bioinformatics 新增 10,127 篇 canonical works，目录范围为 2015 至当前公开的 2026 内容（不是完整 2026 年度），摘要 10,125 篇，DOI 和 PDF 链接各 10,127 条。`v1.2.0` 已完成合并与严格对账，发行包待发布。
+- **187,158 篇论文、27 个已收录期刊/会议**；Bioinformatics 新增 10,127 篇 canonical works，目录范围为 2015 至当前公开的 2026 内容（不是完整 2026 年度），摘要 10,125 篇，DOI 和 PDF 链接各 10,127 条。完整数据库随 GitHub Release `v1.2.0` 提供，已完成严格对账和独立安装验证。
 - 历史 `v1.1.0` 保留 177,031 篇/26 个 venue；它在 `v1.0.0` 的 127,256 篇/22 个 venue 基线上新增 CVPR 21,482 篇、ICCV 8,691 篇、ECCV 9,416 篇和 ACL 10,186 篇，`v1.0.1` 仅修复安装器。数据版本扩增元数据和实际观察到的 PDF 链接，没有下载论文 PDF；缺失字段保留来源说明。
 - **一个 venue 一份采集手册**，统一入口是 [`SKILL.md`](SKILL.md)。入口、分页、收录范围、字段/PDF 规则和历史异常在 [`references/venues/`](references/venues/) 中维护。
 - 本地工作台提供关键词、语义、混合检索，支持 venue/年份筛选；可导出所选或当前展示结果为 **CSV、JSON、BibTeX、RIS**。
@@ -57,7 +57,7 @@ python3 tools/litdb.py search stop
 
 默认数据库目录相对于 skill 自身解析，从任意工作目录使用绝对脚本路径也有效。优先级为 `--home` > `LITDB_HOME` > `<skill-root>/data/literature-db`。搜索只读源 catalog，派生 lookup、文本、向量、模型和日志写入 `<db-home>/search/`。
 
-历史 `v1.1.0` 数据集覆盖 26 个 venue；准备发布的 `v1.2.0` 加入 Bioinformatics 后目标为 27 个 venue、187,158 篇 canonical works。源配置 registry 有 108 个候选 venue（48 个会议、60 个期刊）；候选数量不表示这些 venue 全部已经收录。保留 `v1.1.0` 的 177,031 篇/26 个 venue 作为历史冻结基线。当前字段覆盖见 [数据库快照统计](references/catalog-snapshot.md)。详细采集方式见 [venue 索引](references/venue-index.md)、[采集/增量模式](references/modes.md)、[维护命令](references/maintenance.md)。各 venue 的实际年份、水位和缺失字段以数据库/manifest 为准。
+历史 `v1.1.0` 数据集覆盖 26 个 venue；当前 `v1.2.0` 加入 Bioinformatics 后包含 27 个 venue、187,158 篇 canonical works。源配置 registry 有 108 个候选 venue（48 个会议、60 个期刊）；候选数量不表示这些 venue 全部已经收录。保留 `v1.1.0` 的 177,031 篇/26 个 venue 作为历史冻结基线。当前字段覆盖见 [数据库快照统计](references/catalog-snapshot.md)。详细采集方式见 [venue 索引](references/venue-index.md)、[采集/增量模式](references/modes.md)、[维护命令](references/maintenance.md)。各 venue 的实际年份、水位和缺失字段以数据库/manifest 为准。
 
 更新流程：读取对应手册和已有水位 → 枚举官方新增年份/期次 → 提取并保存字段来源 → 校验 staging → 单写入者事务合并（同时写入数据库水位）→ reconciliation 通过后确认完成 → `search index`。公开稳定 HTML/API 可由脚本采集；动态页面和登录依赖页面使用正常授权浏览器。遇到访问限制保存断点，不绕过限制。
 

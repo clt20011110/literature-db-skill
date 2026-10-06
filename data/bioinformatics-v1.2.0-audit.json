@@ -1,0 +1,131 @@
+{
+  "schema_version": "literature-db-bioinformatics-release-audit-v1",
+  "release_version": "v1.2.0",
+  "audit_date": "2026-10-06",
+  "release_package_status": "VERIFIED",
+  "scope": {
+    "year_from": 2015,
+    "year_through": 2026,
+    "2026_scope": "content publicly available at observation time",
+    "calendar_year_2026_complete": false
+  },
+  "observations": {
+    "archive_directory_date": "2026-10-05",
+    "article_details_through_date": "2026-10-06",
+    "issue_routes": 248,
+    "issue_listing_pages": 249,
+    "advance_listing_terminal_observed": true
+  },
+  "collection": {
+    "expected_source_items": 10448,
+    "accepted_source_items": 10127,
+    "accepted_canonical_works": 10127,
+    "excluded_source_items": 321,
+    "unresolved_items": 0,
+    "abstracts_present": 10125,
+    "abstracts_missing_with_reason": 2,
+    "doi_values": 10127,
+    "pdf_link_values": 10127,
+    "reviewed_scope_decisions_applied": 177,
+    "reviewed_scope_decisions_invalid": 0,
+    "advance_original_papers": 3
+  },
+  "checks": {
+    "strict_staging_validation": "PASS",
+    "security_scan": "PASS",
+    "accepted_input_reconciliation": "PASS",
+    "missing_items": 0,
+    "extra_items": 0,
+    "duplicate_items": 0,
+    "provenance_gaps": 0,
+    "exclusion_provenance_gaps": 0,
+    "bundle_integrity": "PASS",
+    "independent_installation": "PASS",
+    "bundle_records_checked": 187158,
+    "installed_records_checked": 187158,
+    "bundle_and_installed_missing_or_changed_academic_records": 0
+  },
+  "baseline_preservation": {
+    "v1_1_canonical_works": 177031,
+    "old_records_checked": 177031,
+    "old_records_missing": 0,
+    "old_records_core_fields_changed": 0,
+    "old_records_academic_dates_changed": 0,
+    "old_records_academic_public_links_changed": 0,
+    "old_records_academic_date_link_changed": 0
+  },
+  "yearly_counts": [
+    {
+      "year": 2015,
+      "source_items": 789,
+      "accepted": 765,
+      "excluded": 24
+    },
+    {
+      "year": 2016,
+      "source_items": 816,
+      "accepted": 795,
+      "excluded": 21
+    },
+    {
+      "year": 2017,
+      "source_items": 813,
+      "accepted": 793,
+      "excluded": 20
+    },
+    {
+      "year": 2018,
+      "source_items": 889,
+      "accepted": 862,
+      "excluded": 27
+    },
+    {
+      "year": 2019,
+      "source_items": 1027,
+      "accepted": 989,
+      "excluded": 38
+    },
+    {
+      "year": 2020,
+      "source_items": 1105,
+      "accepted": 1069,
+      "excluded": 36
+    },
+    {
+      "year": 2021,
+      "source_items": 924,
+      "accepted": 897,
+      "excluded": 27
+    },
+    {
+      "year": 2022,
+      "source_items": 1007,
+      "accepted": 980,
+      "excluded": 27
+    },
+    {
+      "year": 2023,
+      "source_items": 896,
+      "accepted": 847,
+      "excluded": 49
+    },
+    {
+      "year": 2024,
+      "source_items": 745,
+      "accepted": 728,
+      "excluded": 17
+    },
+    {
+      "year": 2025,
+      "source_items": 661,
+      "accepted": 644,
+      "excluded": 17
+    },
+    {
+      "year": 2026,
+      "source_items": 776,
+      "accepted": 758,
+      "excluded": 18
+    }
+  ]
+}

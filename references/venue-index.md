@@ -5,7 +5,7 @@ To collect another venue or extend coverage, follow the [扩增 venue 指南](ex
 - [aaai](venues/aaai.md)
 - [acl](venues/acl.md)
 - [asp-dac](venues/asp-dac.md)
-- [bioinformatics](venues/bioinformatics.md) — merged and reconciled for prepared `v1.2.0`; 10,127 canonical works; release package pending publication
+- [bioinformatics](venues/bioinformatics.md) — included in `v1.2.0`; 10,127 canonical works; merge, reconciliation and installation verified
 - [cvpr](venues/cvpr.md)
 - [dac](venues/dac.md)
 - [date](venues/date.md)
@@ -31,4 +31,4 @@ To collect another venue or extend coverage, follow the [扩增 venue 指南](ex
 - [trets](venues/trets.md)
 - [tvlsi](venues/tvlsi.md)
 
-There are 27 active venue playbooks and one retired venue playbook. Bioinformatics was merged and strictly reconciled into the prepared `v1.2.0` snapshot; the release package is pending publication. A playbook documents the collection method; completed years and field coverage are established by the database and reconciliation receipts. Registry entries without a playbook require official-source discovery before collection.
+There are 27 active venue playbooks and one retired venue playbook. Bioinformatics was merged and strictly reconciled into the `v1.2.0` snapshot; the bundle and independent installation checks passed. A playbook documents the collection method; completed years and field coverage are established by the database and reconciliation receipts. Registry entries without a playbook require official-source discovery before collection.

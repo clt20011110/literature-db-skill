@@ -1,15 +1,15 @@
 {
   "format_version": 1,
-  "release_version": "v1.1.0",
+  "release_version": "v1.2.0",
   "archive": {
-    "name": "literature-db-v1.1.0.tar.gz",
-    "size_bytes": 597858496,
-    "sha256": "bd21817b5a1d4a482fc03c7d3913d5571bcc036c060299b2fd9f1ba911290e13",
+    "name": "literature-db-v1.2.0.tar.gz",
+    "size_bytes": 629609010,
+    "sha256": "0d588600f319832edf672a94203309051c7730d8bbbc5a3929284d03cbc36e42",
     "parts": [
       {
-        "name": "literature-db-v1.1.0.tar.gz",
-        "size_bytes": 597858496,
-        "sha256": "bd21817b5a1d4a482fc03c7d3913d5571bcc036c060299b2fd9f1ba911290e13"
+        "name": "literature-db-v1.2.0.tar.gz",
+        "size_bytes": 629609010,
+        "sha256": "0d588600f319832edf672a94203309051c7730d8bbbc5a3929284d03cbc36e42"
       }
     ]
   }

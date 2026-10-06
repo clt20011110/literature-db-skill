@@ -5,7 +5,7 @@ The release installer places the verified catalog and its maintenance files in
 `integrity_check`, and verifies all table counts and the bundled entity and
 canonical-field digests before installing.
 
-The prepared v1.2.0 snapshot totals **187,158 canonical papers across 27 venues**. It adds 10,127 Bioinformatics works to the historical v1.1.0 baseline of 177,031 papers across 26 venues. The Bioinformatics collection covers 2015 through currently public 2026 content, with 10,125 abstracts and 10,127 DOI and PDF links; 321 source items are excluded. Strict staging, security checks and accepted-input reconciliation passed with no missing, extra, duplicate or provenance-gap records. The v1.2.0 package is being prepared; these install commands will apply after its public release.
+The v1.2.0 snapshot totals **187,158 canonical papers across 27 venues**. It adds 10,127 Bioinformatics works to the historical v1.1.0 baseline of 177,031 papers across 26 venues. The Bioinformatics collection covers 2015 through currently public 2026 content, with 10,125 abstracts and 10,127 DOI and PDF links; 321 source items are excluded. Strict staging, security checks and accepted-input reconciliation passed with no missing, extra, duplicate or provenance-gap records. The full bundle and a separate installation both passed integrity and preservation checks for all 187,158 canonical works.
 
 ```bash
 python3 scripts/install_database.py --base-url https://github.com/clt20011110/literature-db-skill/releases/download/v1.2.0

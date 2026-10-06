@@ -1,21 +1,21 @@
 {
   "format_version": 1,
-  "release_version": "v1.1.0",
-  "generated_at_utc": "2026-10-04T13:49:47+00:00",
+  "release_version": "v1.2.0",
+  "generated_at_utc": "2026-10-06T01:41:25+00:00",
   "database": {
     "filename": "catalog.sqlite",
-    "size_bytes": 4908474368,
-    "sha256": "165d22c964ebb21beebdc47218ec91517cd075a9e798d3f3f0d5115879f15410"
+    "size_bytes": 5204062208,
+    "sha256": "9f9b14c158fd37e667302e71f3d2f5f9fb3c1629ea801683234bccc4ab227198"
   },
   "release_archive": {
-    "name": "literature-db-v1.1.0.tar.gz",
-    "size_bytes": 597858496,
-    "sha256": "bd21817b5a1d4a482fc03c7d3913d5571bcc036c060299b2fd9f1ba911290e13",
+    "name": "literature-db-v1.2.0.tar.gz",
+    "size_bytes": 629609010,
+    "sha256": "0d588600f319832edf672a94203309051c7730d8bbbc5a3929284d03cbc36e42",
     "parts": [
       {
-        "name": "literature-db-v1.1.0.tar.gz",
-        "size_bytes": 597858496,
-        "sha256": "bd21817b5a1d4a482fc03c7d3913d5571bcc036c060299b2fd9f1ba911290e13"
+        "name": "literature-db-v1.2.0.tar.gz",
+        "size_bytes": 629609010,
+        "sha256": "0d588600f319832edf672a94203309051c7730d8bbbc5a3929284d03cbc36e42"
       }
     ]
   },
@@ -23,31 +23,32 @@
     "tables": {
       "auth_task": 0,
       "browser_page_observation": 0,
-      "canonical_work": 177031,
+      "canonical_work": 187158,
       "crawl_recipe": 0,
       "drift_event": 0,
-      "field_provenance": 2108056,
-      "merge_event": 26,
+      "field_provenance": 2242019,
+      "merge_event": 27,
       "recipe_run": 0,
-      "repair_task": 88518,
+      "repair_task": 88527,
       "schema_meta": 1,
-      "source_item": 190847,
-      "source_item_field": 4723712,
+      "source_item": 201295,
+      "source_item_field": 4982023,
       "thread_run": 2,
-      "update_watermark": 26,
-      "venue": 26,
-      "venue_state": 26,
+      "update_watermark": 27,
+      "venue": 27,
+      "venue_state": 27,
       "venue_year_baseline": 0,
-      "venue_year_coverage": 287,
+      "venue_year_coverage": 299,
       "waiver": 0,
-      "work_identifier": 280695,
-      "work_location": 354627,
-      "work_version": 177032
+      "work_identifier": 300949,
+      "work_location": 374881,
+      "work_version": 187159
     },
     "source_tables_match_bundled": true,
-    "source_entity_digest_sha256": "981a394cb164839b8049eaed34d3815de2190ec20b9ffcad4ab9815a643f47b1",
-    "bundled_entity_digest_sha256": "d902480a2afbc15c2200b01925173d2566fe72bda7a49e649a46c3e396cadd9f",
+    "source_entity_digest_sha256": "22cce0add8158da866a70a23fde57b5d2263f6dd2bfa864e19cae7e48553fc4b",
+    "bundled_entity_digest_sha256": "c75665bb30180fa1e5513401d6d3137ed259b0bbd9f4902c5c5a385a4cdbe5ec",
     "core_fields": {
+      "table": "canonical_work",
       "fields": [
         "canonical_key",
         "title",
@@ -59,8 +60,8 @@
         "document_type",
         "primary_source_item_id"
       ],
-      "source_sha256": "374f3628710243c3e694711d32cbeca14e0292f0a5d36283c2139b4c71e3c695",
-      "bundled_sha256": "374f3628710243c3e694711d32cbeca14e0292f0a5d36283c2139b4c71e3c695",
+      "source_sha256": "2144b8aa7726796cc8563d5c3e860feab05bcfd849b9a918e36f571c281a0d8c",
+      "bundled_sha256": "2144b8aa7726796cc8563d5c3e860feab05bcfd849b9a918e36f571c281a0d8c",
       "unchanged": true
     }
   },
@@ -68,12 +69,12 @@
     "transform_counts_by_category": {
       "internal-request": 155084,
       "internal-thread": 183737,
-      "omitted-local-artifact": 30933
+      "omitted-local-artifact": 30946
     },
     "changed_rows_by_table": {
-      "merge_event": 4,
-      "repair_task": 30912,
-      "venue_state": 4
+      "merge_event": 5,
+      "repair_task": 30921,
+      "venue_state": 5
     },
     "credential_pattern_hits": 0,
     "preserved_academic_session_fields": [
@@ -83,138 +84,68 @@
   },
   "maintenance_assets": {
     "included_counts": {
-      "registry": 114,
+      "registry": 115,
       "recipe_config": 87,
-      "expected_manifest": 216,
+      "expected_manifest": 228,
       "campaign_state": 1
     },
     "excluded_counts": {
       "recipe_file": 0
     },
-    "selected_file_count": 418
+    "selected_file_count": 431
   },
   "expansion": {
-    "baseline_release": "v1.0.0",
+    "baseline_release": "v1.1.0",
     "baseline_preservation": {
-      "original_canonical_works": 127256,
+      "original_canonical_works": 177031,
       "changed": 0,
       "missing": 0,
       "status": "PASS"
     },
-    "added_canonical_works": 49775,
+    "added_canonical_works": 10127,
     "venues": {
-      "cvpr": {
+      "bioinformatics": {
         "status": "PASS",
-        "included_source_count": 21482,
+        "included_source_count": 10127,
         "field_coverage": {
-          "title": 21482,
-          "authors": 21482,
-          "abstract": 21476,
-          "doi": 0,
-          "landing_url": 21482,
-          "pdf_url": 21482,
-          "publication_date": 21476
+          "abstract": 10125,
+          "authors": 10127,
+          "doi": 10127,
+          "landing_url": 10127,
+          "pdf_url": 10127,
+          "publication_date": 10120,
+          "title": 10127
         },
         "year_counts": {
-          "2015": 601,
-          "2016": 643,
-          "2017": 783,
-          "2018": 979,
-          "2019": 1294,
-          "2020": 1466,
-          "2021": 1660,
-          "2022": 2074,
-          "2023": 2353,
-          "2024": 2716,
-          "2025": 2871,
-          "2026": 4042
+          "2015": 765,
+          "2016": 795,
+          "2017": 793,
+          "2018": 862,
+          "2019": 989,
+          "2020": 1069,
+          "2021": 897,
+          "2022": 980,
+          "2023": 847,
+          "2024": 728,
+          "2025": 644,
+          "2026": 758
         },
-        "merged_at": "2026-10-04T09:25:07.817621Z",
-        "reconciled_at": "2026-10-04T09:26:57.438424Z",
-        "excluded": 1
-      },
-      "iccv": {
-        "status": "PASS",
-        "included_source_count": 8691,
-        "field_coverage": {
-          "abstract": 8690,
-          "authors": 8691,
-          "doi": 0,
-          "landing_url": 8691,
-          "pdf_url": 8691,
-          "publication_date": 8690,
-          "title": 8691
-        },
-        "year_counts": {
-          "2015": 526,
-          "2017": 621,
-          "2019": 1075,
-          "2021": 1612,
-          "2023": 2156,
-          "2025": 2701
-        },
-        "merged_at": "2026-10-04T10:18:50.374646Z",
-        "reconciled_at": "2026-10-04T10:20:33.001149Z",
-        "excluded": 0
-      },
-      "eccv": {
-        "status": "PASS",
-        "included_source_count": 9416,
-        "field_coverage": {
-          "abstract": 9416,
-          "authors": 9416,
-          "doi": 9379,
-          "landing_url": 9416,
-          "pdf_url": 9416,
-          "publication_date": 9379,
-          "title": 9416
-        },
-        "year_counts": {
-          "2016": 415,
-          "2018": 776,
-          "2020": 1358,
-          "2022": 1645,
-          "2024": 2387,
-          "2026": 2835
-        },
-        "merged_at": "2026-10-04T12:13:42.628742Z",
-        "reconciled_at": "2026-10-04T12:14:41.221205Z",
-        "excluded": 10
-      },
-      "acl": {
-        "status": "PASS",
-        "included_source_count": 10186,
-        "field_coverage": {
-          "title": 10186,
-          "authors": 10186,
-          "abstract": 9538,
-          "doi": 10183,
-          "landing_url": 10186,
-          "pdf_url": 10186,
-          "publication_date": 10186
-        },
-        "year_counts": {
-          "2015": 318,
-          "2016": 328,
-          "2017": 302,
-          "2018": 381,
-          "2019": 660,
-          "2020": 778,
-          "2021": 710,
-          "2022": 700,
-          "2023": 1074,
-          "2024": 940,
-          "2025": 1699,
-          "2026": 2296
-        },
-        "merged_at": "2026-10-04T06:18:53.150089Z",
-        "reconciled_at": "2026-10-04T06:21:15.535397Z",
-        "excluded": 23
+        "merged_at": "2026-10-06T01:34:57.045430Z",
+        "reconciled_at": "2026-10-06T01:36:25.355659Z",
+        "excluded": 321
       }
     }
   },
   "tests": {
-    "python_litdb_passed": 152,
-    "node_passed": 10
+    "python_litdb_passed": 200
+  },
+  "verification": {
+    "bundle_integrity_check": "ok",
+    "installed_integrity_check": "ok",
+    "bundle_records_checked": 187158,
+    "installed_records_checked": 187158,
+    "missing_or_changed_academic_records": 0,
+    "production_search_indexed_papers": 187158,
+    "production_search_stale": false
   }
 }
