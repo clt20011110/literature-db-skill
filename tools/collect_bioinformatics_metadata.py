@@ -65,6 +65,7 @@ SCOPE_DECISION_FINGERPRINT_METHOD = (
 SCOPE_REVIEWED_INCLUSION_METHOD = "reviewed_exact_identity_title_and_abstract_scope"
 SCOPE_REVIEWED_EXCLUSION_METHOD = "reviewed_exact_identity_title_and_publication_type_scope"
 SCOPE_REVIEWED_PUBLISHER_EXCLUSION_METHOD = "reviewed_exact_identity_publisher_article_content_scope"
+SCOPE_REVIEWED_PUBLISHER_INCLUSION_METHOD = "reviewed_exact_identity_publisher_abstract_scope"
 SCOPE_DECISION_REASON_CODES = {
     "include_research": frozenset({"substantive_abstract_tool_or_study"}),
     "exclude_nonresearch": frozenset(ALLOWED_EXCLUSION_REASONS),
@@ -563,8 +564,8 @@ def _load_scope_decisions(
         is_publisher_review = "publisher_capture" in row
         publisher_capture = row.get("publisher_capture") if is_publisher_review else None
         if is_publisher_review:
-            if decision != "exclude_nonresearch":
-                errors.append("publisher article-content review supports exclusions only")
+            if decision not in {"exclude_nonresearch", "include_research"}:
+                errors.append("publisher review decision must be an exclusion or reviewed abstract inclusion")
             if not isinstance(publisher_capture, dict):
                 publisher_capture = {}
                 errors.append("publisher_capture binding is required")
@@ -582,6 +583,12 @@ def _load_scope_decisions(
             capture_sha256 = publisher_capture.get("sha256")
             if not isinstance(capture_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", capture_sha256):
                 errors.append("publisher_capture.sha256 must be a lowercase SHA-256")
+            publisher_abstract_sha256 = publisher_capture.get("abstract_sha256")
+            if decision == "include_research" and (
+                not isinstance(publisher_abstract_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", publisher_abstract_sha256)
+            ):
+                errors.append("publisher abstract inclusion requires publisher_capture.abstract_sha256")
             capture_url = publisher_capture.get("source_url")
             if (
                 not isinstance(capture_url, str)
@@ -608,6 +615,10 @@ def _load_scope_decisions(
                 and source_review.get("publisher_capture_file") == publisher_file
                 and source_review.get("publisher_capture_sha256") == capture_sha256
                 and source_review.get("publisher_capture_observed_at") == publisher_capture.get("observed_at")
+                and (
+                    decision != "include_research"
+                    or source_review.get("publisher_abstract_sha256") == publisher_abstract_sha256
+                )
                 and source_review.get("decision") == decision
                 and source_review.get("reason_code") == reason_code
                 and source_review.get("reason") == reason
@@ -714,13 +725,26 @@ def _scope_review_binding_errors(
             and detail.get("_evidence_sha256") == publisher_binding.get("sha256")
             and normalize_doi(detail.get("doi")) == row.get("doi")
             and detail.get("title") == row.get("title")
+            and (
+                row.get("decision") != "include_research"
+                or (
+                    isinstance(detail.get("abstract"), str)
+                    and bool(detail["abstract"].strip())
+                    and detail.get("_abstract_sha256") == publisher_binding.get("abstract_sha256")
+                )
+            )
         ]
         if len(source_dois) != 1 or row.get("doi") != source_dois[0]:
             errors.append("OUP DOI binding mismatch")
         if len(matches) != 1:
             errors.append("publisher_capture must identify one selected complete exact-identity article capture")
-        if row.get("decision") != "exclude_nonresearch":
-            errors.append("publisher article-content review supports exclusions only")
+        if row.get("decision") == "include_research":
+            if row.get("reason_code") != "substantive_abstract_tool_or_study":
+                errors.append("publisher abstract inclusion requires substantive_abstract_tool_or_study")
+            if len(matches) != 1:
+                errors.append("publisher abstract inclusion requires one selected capture with a matching non-empty abstract fingerprint")
+        elif row.get("decision") != "exclude_nonresearch":
+            errors.append("publisher review decision must be an exclusion or reviewed abstract inclusion")
         return errors
     epmc_binding = row.get("europe_pmc", {})
     if (
@@ -754,7 +778,9 @@ def _scope_review_evidence(document: dict[str, Any], row: dict[str, Any]) -> dic
         "review_source": document["review_source"],
         "reviewed_at_utc": document["reviewed_at_utc"],
         "method": (
-            SCOPE_REVIEWED_INCLUSION_METHOD
+            SCOPE_REVIEWED_PUBLISHER_INCLUSION_METHOD
+            if "publisher_capture" in row and row["decision"] == "include_research"
+            else SCOPE_REVIEWED_INCLUSION_METHOD
             if row["decision"] == "include_research"
             else SCOPE_REVIEWED_PUBLISHER_EXCLUSION_METHOD
             if "publisher_capture" in row
@@ -2080,6 +2106,7 @@ def _capture_items(capture: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _article_detail(capture: dict[str, Any]) -> dict[str, Any]:
     data = capture["data"]
+    abstract = data.get("abstract")
     return {
         "source_native_id": article_native_id(capture["source_url"]),
         "source_url": capture["source_url"],
@@ -2094,7 +2121,12 @@ def _article_detail(capture: dict[str, Any]) -> dict[str, Any]:
         "issue": data.get("citation_issue"),
         "publication_date": data.get("citation_publication_date"),
         "visible_publication_date": data.get("visible_publication_date"),
-        "abstract": data.get("abstract"),
+        "abstract": abstract,
+        "_abstract_sha256": (
+            hashlib.sha256(abstract.encode("utf-8")).hexdigest()
+            if isinstance(abstract, str) and abstract.strip()
+            else None
+        ),
         "document_type": data.get("document_type"),
         "pdf_url": data.get("citation_pdf_url"),
         "_evidence_file": capture.get("_evidence_file"),
@@ -2480,6 +2512,9 @@ def collect(
         if not selected_type and type_candidates:
             selected_type, type_source_url, type_observed_at = type_candidates[0]
         oup_scope_decision, oup_scope_reason = classify_scope(selected_type, title)
+        oup_selected_type = selected_type
+        oup_type_source_url = type_source_url
+        oup_type_observed_at = type_observed_at
         type_method = "official_article_type_or_issue_section"
         if (
             classify_scope(selected_type, title)[0] == "unresolved"
@@ -2610,6 +2645,14 @@ def collect(
                 scope_review_evidence = _scope_review_evidence(scope_decision_document, scope_review_row)
                 if scope_review_row["decision"] == "include_research":
                     decision, reason = "include", None
+                    if "publisher_capture" in scope_review_row:
+                        # A content review does not create a publisher type. Keep
+                        # the exact OUP label/section even if an API fallback was
+                        # selected only to decide scope.
+                        selected_type = oup_selected_type
+                        type_source_url = oup_type_source_url
+                        type_observed_at = oup_type_observed_at
+                        type_method = "official_article_type_or_issue_section"
                 else:
                     decision, reason = "exclude", scope_review_row["reason_code"]
                 if "publisher_capture" not in scope_review_row:
@@ -2774,17 +2817,31 @@ def collect(
             ),
         }
         if scope_review_evidence:
-            field_provenance["inclusion_decision"] = _prov(
-                supplement["source_url"],
-                supplement["observed_at"],
-                SCOPE_REVIEWED_INCLUSION_METHOD,
-                review_reason_code=applied_scope_review["reason_code"],
-                review_reason=applied_scope_review["reason"],
-                review_source=scope_review_evidence["review_source"]["file"],
-                review_source_sha256=scope_review_evidence["review_source"]["sha256"],
-                review_receipt_sha256=scope_review_evidence["review_receipt_sha256"],
-                europe_pmc_abstract_sha256=scope_review_evidence["europe_pmc"]["abstract_sha256"],
-            )
+            common_review_provenance = {
+                "review_reason_code": applied_scope_review["reason_code"],
+                "review_reason": applied_scope_review["reason"],
+                "review_source": scope_review_evidence["review_source"]["file"],
+                "review_source_sha256": scope_review_evidence["review_source"]["sha256"],
+                "review_receipt_sha256": scope_review_evidence["review_receipt_sha256"],
+            }
+            if "publisher_capture" in scope_review_evidence:
+                publisher_capture = scope_review_evidence["publisher_capture"]
+                field_provenance["inclusion_decision"] = _prov(
+                    publisher_capture["source_url"],
+                    publisher_capture["observed_at"],
+                    SCOPE_REVIEWED_PUBLISHER_INCLUSION_METHOD,
+                    **common_review_provenance,
+                    publisher_capture=publisher_capture,
+                    publisher_abstract_sha256=publisher_capture["abstract_sha256"],
+                )
+            else:
+                field_provenance["inclusion_decision"] = _prov(
+                    supplement["source_url"],
+                    supplement["observed_at"],
+                    SCOPE_REVIEWED_INCLUSION_METHOD,
+                    **common_review_provenance,
+                    europe_pmc_abstract_sha256=scope_review_evidence["europe_pmc"]["abstract_sha256"],
+                )
         if crossref_record and crossref_vor:
             field_provenance["crossref_pdf_metadata"] = _prov(
                 crossref_record["source_url"],

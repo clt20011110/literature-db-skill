@@ -620,6 +620,11 @@ class BioinformaticsCaptureTests(unittest.TestCase):
         section: str | None = "MESSAGE FROM THE ISCB",
         publication_types: list[str] | None = None,
         article_complete: bool = True,
+        decision: str = "exclude_nonresearch",
+        reason_code: str = "society_information",
+        reason: str | None = None,
+        abstract_text: str | None = None,
+        publisher_abstract_sha256_override: str | None = None,
         capture_override: str | None = None,
         row_mutator: Any = None,
         receipt_mutator: Any = None,
@@ -631,7 +636,7 @@ class BioinformaticsCaptureTests(unittest.TestCase):
             source_id = article_native_id(landing_url)
             issue_parts = landing_url.split("/article/")[1].split("/")
             volume, issue = issue_parts[0], issue_parts[1]
-            year = 2015 if volume == "31" else 2017 if volume == "33" else 2026
+            year = 2015 if volume == "31" else 2017 if volume == "33" else 2025 if volume == "41" else 2026
             issue_url = f"https://academic.oup.com/bioinformatics/issue/{volume}/{issue}"
             issue_capture = sanitize_capture(make_capture("issue", issue_url, {
                 "year": year, "volume": volume, "issue": issue,
@@ -647,7 +652,10 @@ class BioinformaticsCaptureTests(unittest.TestCase):
             }))
             article_capture = sanitize_capture(make_capture("article", landing_url, {
                 **article_data(title, doi, None, authors=["Example, Ada"]),
-                "abstract": "A visible publisher article abstract." if article_complete else None,
+                "abstract": (
+                    abstract_text if abstract_text is not None
+                    else "A visible publisher article abstract." if article_complete else None
+                ),
             }, complete=article_complete))
 
             captures: list[tuple[str, dict[str, Any]]] = []
@@ -670,6 +678,18 @@ class BioinformaticsCaptureTests(unittest.TestCase):
             article_file, article_index = captures[1]
             capture_file = issue_file if capture_override == "issue" else capture_override or article_file
             capture_sha = next(row["capture_id"] for file, row in captures if file == capture_file)
+            captured_abstract = article_capture["data"].get("abstract")
+            if publisher_abstract_sha256_override is not None:
+                abstract_sha256 = publisher_abstract_sha256_override
+            elif isinstance(captured_abstract, str):
+                abstract_sha256 = hashlib.sha256(captured_abstract.encode("utf-8")).hexdigest()
+            else:
+                abstract_sha256 = None
+            review_reason = reason or (
+                "The reviewed publisher abstract describes a substantive computational study."
+                if decision == "include_research"
+                else "The observed publisher body is a meeting or community report rather than a research article."
+            )
             decision_row = {
                 "source_native_id": source_id,
                 "doi": doi,
@@ -681,10 +701,12 @@ class BioinformaticsCaptureTests(unittest.TestCase):
                     "source_url": landing_url,
                     "observed_at": article_index["observed_at"],
                 },
-                "decision": "exclude_nonresearch",
-                "reason_code": "society_information",
-                "reason": "The observed publisher body is a meeting or community report rather than a research article.",
+                "decision": decision,
+                "reason_code": reason_code,
+                "reason": review_reason,
             }
+            if decision == "include_research":
+                decision_row["publisher_capture"]["abstract_sha256"] = abstract_sha256
             if row_mutator:
                 row_mutator(decision_row)
             review_source_row = {
@@ -695,6 +717,7 @@ class BioinformaticsCaptureTests(unittest.TestCase):
                 "publisher_capture_file": decision_row["publisher_capture"]["file"],
                 "publisher_capture_sha256": decision_row["publisher_capture"]["sha256"],
                 "publisher_capture_observed_at": decision_row["publisher_capture"]["observed_at"],
+                **({"publisher_abstract_sha256": abstract_sha256} if decision == "include_research" else {}),
                 "decision": decision_row["decision"],
                 "reason_code": decision_row["reason_code"],
                 "reason": decision_row["reason"],
@@ -768,6 +791,9 @@ class BioinformaticsCaptureTests(unittest.TestCase):
                 "article_capture_file": article_file,
                 "article_capture_sha256": article_index["capture_id"],
                 "article_capture_observed_at": article_index["observed_at"],
+                "article_abstract_sha256": hashlib.sha256(
+                    article_capture["data"].get("abstract", "").encode("utf-8")
+                ).hexdigest() if isinstance(article_capture["data"].get("abstract"), str) else None,
                 "review_source_sha256": hashlib.sha256(source_bytes).hexdigest(),
             }
 
@@ -1106,6 +1132,113 @@ class BioinformaticsCaptureTests(unittest.TestCase):
             "research_scope_unresolved",
             {row["kind"] for row in explicit_api_nonresearch["unresolved"]},
         )
+
+    def test_reviewed_publisher_abstract_inclusion_is_exact_and_provenanced(self) -> None:
+        title = "Efficient 3D kernels for molecular property prediction"
+        doi = "10.1093/bioinformatics/btaf208"
+        landing_url = "https://academic.oup.com/bioinformatics/article/41/Supplement_1/i58/8199352"
+        included = self._collect_publisher_reviewed_scope_case(
+            title=title,
+            doi=doi,
+            landing_url=landing_url,
+            section="JOURNAL ARTICLE",
+            decision="include_research",
+            reason_code="substantive_abstract_tool_or_study",
+        )
+        self.assertEqual(len(included["staging"]), 1)
+        self.assertEqual(included["exclusions"], [])
+        self.assertEqual(included["scope_decision_report"][0]["status"], "applied")
+        staged = included["staging"][0]
+        self.assertEqual(staged["source_native_id"], "bioinformatics:8199352")
+        self.assertEqual(staged["document_type"], "JOURNAL ARTICLE")
+        self.assertNotEqual(staged["document_type"], "Research Article")
+        evidence = staged["scope_decision_evidence"]
+        self.assertEqual(evidence["method"], "reviewed_exact_identity_publisher_abstract_scope")
+        self.assertNotIn("europe_pmc", evidence)
+        provenance = staged["field_provenance"]["inclusion_decision"]
+        self.assertEqual(provenance["method"], "reviewed_exact_identity_publisher_abstract_scope")
+        self.assertEqual(provenance["source_url"], landing_url)
+        self.assertEqual(provenance["observed_at"], included["article_capture_observed_at"])
+        self.assertEqual(provenance["publisher_abstract_sha256"], included["article_abstract_sha256"])
+        self.assertEqual(provenance["publisher_capture"]["sha256"], included["article_capture_sha256"])
+        self.assertNotIn("europe_pmc_abstract_sha256", provenance)
+        self.assertEqual(provenance["review_source_sha256"], included["review_source_sha256"])
+
+        api_scope_fallback = self._collect_publisher_reviewed_scope_case(
+            title=title,
+            doi=doi,
+            landing_url=landing_url,
+            section="JOURNAL ARTICLE",
+            publication_types=["research-article", "Journal Article"],
+            decision="include_research",
+            reason_code="substantive_abstract_tool_or_study",
+        )
+        self.assertEqual(len(api_scope_fallback["staging"]), 1)
+        api_staged = api_scope_fallback["staging"][0]
+        self.assertEqual(api_staged["document_type"], "JOURNAL ARTICLE")
+        self.assertEqual(
+            api_staged["field_provenance"]["document_type"]["method"],
+            "official_article_type_or_issue_section",
+        )
+        self.assertEqual(
+            api_staged["europe_pmc_publication_types_as_supplied"],
+            ["research-article", "Journal Article"],
+        )
+
+        empty_abstract = self._collect_publisher_reviewed_scope_case(
+            title=title,
+            doi=doi,
+            landing_url=landing_url,
+            section="JOURNAL ARTICLE",
+            decision="include_research",
+            reason_code="substantive_abstract_tool_or_study",
+            abstract_text="",
+        )
+        self.assertEqual(empty_abstract["staging"], [])
+        self.assertEqual(empty_abstract["scope_decision_report"][0]["status"], "invalid")
+        self.assertTrue(any(
+            "abstract" in error.casefold()
+            for error in empty_abstract["scope_decision_report"][0]["validation_errors"]
+        ))
+
+        stale_fingerprint = self._collect_publisher_reviewed_scope_case(
+            title=title,
+            doi=doi,
+            landing_url=landing_url,
+            section="JOURNAL ARTICLE",
+            decision="include_research",
+            reason_code="substantive_abstract_tool_or_study",
+            publisher_abstract_sha256_override="0" * 64,
+        )
+        self.assertEqual(stale_fingerprint["staging"], [])
+        self.assertEqual(stale_fingerprint["scope_decision_report"][0]["status"], "invalid")
+        self.assertTrue(any(
+            "matching non-empty abstract fingerprint" in error
+            for error in stale_fingerprint["scope_decision_report"][0]["validation_errors"]
+        ))
+
+        explicit_oup_research = self._collect_publisher_reviewed_scope_case(
+            title=title,
+            doi=doi,
+            landing_url=landing_url,
+            section="Original Paper",
+            decision="include_research",
+            reason_code="substantive_abstract_tool_or_study",
+        )
+        self.assertEqual(len(explicit_oup_research["staging"]), 1)
+        self.assertEqual(explicit_oup_research["scope_decision_report"][0]["status"], "already_resolved_by_source")
+
+        explicit_api_nonresearch = self._collect_publisher_reviewed_scope_case(
+            title=title,
+            doi=doi,
+            landing_url=landing_url,
+            section="JOURNAL ARTICLE",
+            publication_types=["Editorial"],
+            decision="include_research",
+            reason_code="substantive_abstract_tool_or_study",
+        )
+        self.assertEqual(explicit_api_nonresearch["staging"], [])
+        self.assertEqual(explicit_api_nonresearch["scope_decision_report"][0]["status"], "already_resolved_by_source")
 
     def test_publisher_article_review_capture_binding_fails_closed(self) -> None:
         row_mutations = {
