@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -61,6 +62,35 @@ def check_search_runtime(search_module) -> None:
         raise search_module.SearchError(
             "本地检索依赖尚未安装。请在 skill 的 tools/search_runtime 目录运行 `npm ci`。"
         )
+
+
+def discovery_options(args: argparse.Namespace) -> dict:
+    """Validate discovery bounds before starting a runtime or making HTTP requests."""
+    if not args.query.strip():
+        raise ValueError("query must not be empty")
+    if not 1 <= args.limit <= 50:
+        raise ValueError("limit must be between 1 and 50")
+    if not 1 <= args.candidate_limit <= 500:
+        raise ValueError("candidate-limit must be between 1 and 500")
+    if args.candidate_limit < args.limit:
+        raise ValueError("candidate-limit must be at least limit")
+    if not math.isfinite(args.kev_timeout) or not 1 <= args.kev_timeout <= 3600:
+        raise ValueError("kev-timeout must be between 1 and 3600 seconds")
+    if not math.isfinite(args.unrelated_threshold) or not 0.5 <= args.unrelated_threshold <= 1:
+        raise ValueError("unrelated-threshold must be between 0.5 and 1")
+    if args.year_from is not None and args.year_to is not None and args.year_from > args.year_to:
+        raise ValueError("year-from must not exceed year-to")
+    if any(not value.strip() for value in args.retrieval_query):
+        raise ValueError("retrieval-query must not be empty")
+    if any(not value.strip() for value in args.keyword):
+        raise ValueError("keyword must not be empty")
+    if args.retriever in {"combined", "keyword"} and not args.keyword:
+        raise ValueError("combined and keyword retrievers require explicit --keyword phrases")
+    return dict(query=args.query, retrieval_queries=args.retrieval_query, keywords=args.keyword,
+                candidate_limit=args.candidate_limit, limit=args.limit, venues=args.venue,
+                year_from=args.year_from, year_to=args.year_to, retriever=args.retriever,
+                kev_url=args.kev_url, kev_timeout=args.kev_timeout,
+                unrelated_threshold=args.unrelated_threshold)
 
 
 def parser() -> argparse.ArgumentParser:
@@ -208,6 +238,29 @@ def parser() -> argparse.ArgumentParser:
     search_query.add_argument("--year-to", type=int)
     search_query.add_argument("--mode", choices=["hybrid","semantic","keyword"], default="hybrid")
     search_query.add_argument("--format", choices=["json","markdown"], default="markdown")
+    search_discover = search_sub.add_parser(
+        "discover", help="Recall bounded candidates with explicit phrases, then rerank with local Kev"
+    )
+    add_home(search_discover)
+    search_discover.add_argument("query", metavar="TOPIC")
+    search_discover.add_argument("--retrieval-query", action="append", default=[],
+                                 help="Additional topic-preserving retrieval query (repeatable)")
+    search_discover.add_argument("--keyword", action="append", default=[],
+                                 help="Literal technical phrase or acronym (repeatable; required for combined/keyword)")
+    search_discover.add_argument("--candidate-limit", type=int, default=50,
+                                 help="Maximum deduplicated candidates sent to Kev (1..500, at least --limit)")
+    search_discover.add_argument("--limit", type=int, default=10, help="Maximum returned papers (1..50)")
+    search_discover.add_argument("--venue", action="append", default=[])
+    search_discover.add_argument("--year-from", type=int)
+    search_discover.add_argument("--year-to", type=int)
+    search_discover.add_argument("--retriever", choices=["combined", "zvec", "keyword"], default="combined")
+    search_discover.add_argument("--kev-url", default=os.environ.get("LITDB_KEV_URL") or "http://127.0.0.1:8019",
+                                 help="Local loopback Kev endpoint (default: LITDB_KEV_URL or port 8019)")
+    search_discover.add_argument("--kev-timeout", type=float, default=180,
+                                 help="Kev total reranking deadline in seconds (1..3600)")
+    search_discover.add_argument("--unrelated-threshold", type=float, default=0.60,
+                                 help="Remove only when unrelated wins and reaches this confidence (0.5..1)")
+    search_discover.add_argument("--format", choices=["json", "markdown"], default="markdown")
     for action in ("serve","start"):
         serve_parser=search_sub.add_parser(action)
         add_home(serve_parser)
@@ -235,6 +288,16 @@ def handle(args: argparse.Namespace) -> int:
                     year_from=args.year_from,year_to=args.year_to,mode=args.mode))
                 if args.format=="json":emit(result)
                 else:print(search.markdown_results(result))
+            elif args.search_command == "discover":
+                options = discovery_options(args)
+                if args.retriever in {"combined", "zvec"}:
+                    check_search_runtime(search)
+                from .discovery import discover
+                result = discover(paths, options)
+                if args.format == "json":
+                    emit(result)
+                else:
+                    print(search.markdown_results(result))
             else:
                 if args.search_command in {"serve", "start"}:
                     check_search_runtime(search)

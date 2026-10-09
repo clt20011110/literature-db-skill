@@ -395,10 +395,14 @@ def scope_clause(options: dict, prefix='e') -> tuple[str,list]:
     return ' AND '.join(clauses) or '1',args
 
 
-def matches_scope(paper: dict, options: dict) -> bool:
-    return any((not options['venues'] or e['id'] in options['venues'])
+def matching_editions(paper: dict, options: dict) -> list[dict]:
+    return [e for e in paper['venues'] if (not options['venues'] or e['id'] in options['venues'])
         and (options['year_from'] is None or e['year']>=options['year_from'])
-        and (options['year_to'] is None or e['year']<=options['year_to']) for e in paper['venues'])
+        and (options['year_to'] is None or e['year']<=options['year_to'])]
+
+
+def matches_scope(paper: dict, options: dict) -> bool:
+    return bool(matching_editions(paper,options))
 
 
 def evidence_excerpt(paper: dict, query: str) -> tuple[str,list[str]]:
@@ -410,8 +414,14 @@ def evidence_excerpt(paper: dict, query: str) -> tuple[str,list[str]]:
     return selected[:650]+('…' if len(selected)>650 else ''),matched
 
 
-def search(paths: LitDBPaths, options: dict, bridge: ZvecBridge | None = None) -> dict:
+def search(paths: LitDBPaths, options: dict, bridge: ZvecBridge | None = None,
+           *, candidate_limit: int | None = None) -> dict:
     options=validate_query(options)
+    # Discovery needs a larger recall pool than the public result page.
+    if candidate_limit is not None and (isinstance(candidate_limit,bool) or
+            not isinstance(candidate_limit,int) or not 1<=candidate_limit<=500):
+        raise ValueError('Candidate limit must be 1–500.')
+    result_limit=candidate_limit or options['limit']
     started=time.perf_counter();home=search_home(paths)
     own_bridge=bridge is None
     with index_lock(home,False):
@@ -441,7 +451,7 @@ def search(paths: LitDBPaths, options: dict, bridge: ZvecBridge | None = None) -
             bridge=bridge or ZvecBridge(home,state['model'])
             try:
                 raw=bridge.call(dict(op='query',query=options['query'],routes=routes,
-                    limit=min(max(options['limit']*3,30),150),include_paths=include_paths,model=state['model']))
+                    limit=candidate_limit or min(max(options['limit']*3,30),150),include_paths=include_paths,model=state['model']))
             finally:
                 if own_bridge:bridge.close()
             ranked=[];seen=set()
@@ -467,7 +477,7 @@ def search(paths: LitDBPaths, options: dict, bridge: ZvecBridge | None = None) -
                 else:
                     paper.update(score=0,matched_terms=[],evidence=paper.get('abstract') or paper['title'])
                 paper['matched_by']='exact_title';ranked.insert(0,paper)
-            return dict(query=options['query'],results=ranked[:options['limit']],total_candidates=len(ranked),
+            return dict(query=options['query'],results=ranked[:result_limit],total_candidates=len(ranked),
                 eligible_papers=eligible,elapsed_ms=round((time.perf_counter()-started)*1000),
                 mode=options['mode'],warnings=warnings,model=state['model'],scope='titles_and_abstracts',
                 index_updated_at=state['updated_at'])
@@ -475,14 +485,28 @@ def search(paths: LitDBPaths, options: dict, bridge: ZvecBridge | None = None) -
 
 def markdown_results(result: dict) -> str:
     lines=[f"检索主题：{result['query']}", '']
+    if result.get('mode')=='discovery':
+        counts=result['counts']
+        lines.extend([f"去重召回 {counts['retrieved_unique']} 篇；Kev 实际判定 {counts['reranked']} 篇，过滤 {counts['filtered']} 篇。仅依据标题和摘要。",''])
     for warning in result.get('warnings',[]):lines.extend([warning,''])
     for i,p in enumerate(result['results'],1):
         title=p['title'].replace('[','\\[').replace(']','\\]')
         url=p.get('article_url') or p.get('landing_url')
         title=f'[{title}]({url})' if url else title
-        lines.extend([f"{i}. **{title}** — {VENUE_LABELS.get(p['venue'],p['venue'])} {p['year']}",
+        edition=f"{VENUE_LABELS.get(p['venue'],p['venue'])} {p['year']}"
+        matched=p.get('matched_editions',[])
+        if matched and {'id':p['venue'],'year':p['year']} not in matched:
+            scoped=' / '.join(f"{VENUE_LABELS.get(e['id'],e['id'])} {e['year']}" for e in matched)
+            edition=f'{scoped}（主记录：{edition}）'
+        lines.extend([f"{i}. **{title}** — {edition}",
                       '   '+', '.join(p['authors']), '   '+p['evidence']])
+        if p.get('relevance'):
+            rel=p['relevance'];prob=rel['probabilities']
+            label={'direct':'直接相关','background':'相关背景','unrelated':'无关倾向'}[rel['choice']]
+            if rel['uncertain']:label+='（待核验）'
+            lines.append(f"   Kev：{label}；直接 {prob['direct']:.3f} / 背景 {prob['background']:.3f} / 无关 {prob['unrelated']:.3f}（未校准的模型分布）。")
         if p.get('pdf_url'):lines.append(f"   [PDF]({p['pdf_url']})")
         lines.append('')
-    if not result['results']:lines.append('当前范围内没有找到匹配论文。')
+    if not result['results']:
+        lines.append('本次候选中没有保留结果；可调整关键词或扩大候选数。这不代表全库没有相关论文。' if result.get('mode')=='discovery' else '当前范围内没有找到匹配论文。')
     return '\n'.join(lines)

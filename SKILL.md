@@ -9,15 +9,27 @@ Use this directory as the skill root. Run `python3 <skill-root>/tools/litdb.py` 
 
 ## Search and export
 
-For a related-paper request, search the local catalog first:
+For a related-paper request, search the local catalog first. Prefer the two-stage `discover` workflow: recall a bounded candidate set with multiple topic-preserving queries and explicit literal phrases, then use a local Kev service to rerank and conservatively filter that set. Read [references/multi-retrieval.md](references/multi-retrieval.md) for setup, controls, and result interpretation.
+
+```bash
+python3 <skill-root>/tools/litdb.py search discover "用图神经网络优化芯片布局和拥塞" \
+  --retrieval-query "graph neural network chip placement congestion" \
+  --retrieval-query "GNN placement congestion prediction" \
+  --keyword "graph neural network" --keyword "GNN" --keyword "placement" --keyword "congestion" \
+  --venue dac --venue iccad --candidate-limit 50 --limit 12 --format json
+```
+
+Honor all venue/year and essential topic constraints in the positional topic and query variants; Kev judges against the full positional topic. For Chinese ideas, retain the original and add precise English technical translations; `combined` and `zvec` include the original topic in recall; `keyword` recalls only the explicit phrases and uses the original topic for Kev judgments. Choose meaningful literal technical phrases, synonyms, and acronyms as repeatable `--keyword` arguments. Phrase matching uses contiguous normalized tokens, with OR between phrases, so keywords alone do not enforce all topic constraints. Do not turn the entire request into an automatic literal keyword or silently broaden its research scope. `combined` (the default) and `keyword` require explicit phrases; `zvec` can run without them. The combined retriever fuses zvec retrieval and catalog phrase matches before Kev sees at most `--candidate-limit` deduplicated papers. Kev does not infer over the full catalog.
+
+Read returned abstracts, including results marked `uncertain`, and distinguish direct relevance from background. Kev choice distributions are model confidence that has not been calibrated for literature relevance, not relevance truth. A candidate with an abstract is removed only when `unrelated` wins at or above `--unrelated-threshold` (default 0.60); low-confidence retained candidates remain available for review. Candidates missing an abstract are retained as `uncertain` even if Kev strongly chooses `unrelated`. An empty result means this bounded search has no accepted candidates, not that the whole catalog has no relevant papers. Deduplicate by `id` and return real titles, authors, venue/year and stored article/PDF links. Retrieval scores and reranking scores are rankings, not relevance probabilities; title/abstract search does not imply full-text reading.
+
+The existing baseline and workbench remain available. If Kev is unavailable, report the failed reranking step and use the baseline when useful, describing its results as retrieval candidates:
 
 ```bash
 python3 <skill-root>/tools/litdb.py search query "research topic or idea" --limit 12 --format json
 ```
 
-Honor venue/year constraints. For Chinese ideas, search both the original and a precise English technical translation. Split complex ideas into distinct retrieval questions when useful. Deduplicate results by `id`, read their abstracts, and distinguish direct relevance from background. Return real titles, authors, venue/year and stored article/PDF links. Scores are rankings, not relevance probabilities; title/abstract search does not imply full-text reading.
-
-Check `search status`; run `search index` when absent or stale. Search opens the source catalog read-only and writes derived artifacts under `<db-home>/search`. Embedding inference is local. `search start --open` opens the workbench, including export of the current displayed results or selected papers as CSV, JSON, BibTeX or RIS with full stored abstracts.
+Check `search status`; run `search index` when absent or stale. All discovery retrievers require the ready derived lookup snapshot (`papers.sqlite` and `state.json`) produced by `search index`. Once that snapshot is ready, discovery's `keyword` queries do not require the Node/zvec runtime; there is no separate keyword-only bootstrap command. Search opens the source catalog read-only and writes derived artifacts under `<db-home>/search`. Embedding and Kev inference remain local; the Kev URL must be a loopback endpoint. `search start --open` opens the existing workbench, including export of the current displayed results or selected papers as CSV, JSON, BibTeX or RIS with full stored abstracts.
 
 ## Collect or update one venue
 
