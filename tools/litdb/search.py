@@ -488,6 +488,9 @@ def markdown_results(result: dict) -> str:
     if result.get('mode')=='discovery':
         counts=result['counts']
         lines.extend([f"去重召回 {counts['retrieved_unique']} 篇；Kev 实际判定 {counts['reranked']} 篇，过滤 {counts['filtered']} 篇。仅依据标题和摘要。",''])
+        policy=result.get('ranking',{}).get('policy')
+        label={'balanced':'召回与 Kev 排名融合','kev':'Kev 置信度排序','retrieval':'仅召回排序，未使用 Kev'}.get(policy)
+        if label:lines.extend([f'排序方式：{label}。',''])
     for warning in result.get('warnings',[]):lines.extend([warning,''])
     for i,p in enumerate(result['results'],1):
         title=p['title'].replace('[','\\[').replace(']','\\]')

@@ -86,9 +86,14 @@ def discovery_options(args: argparse.Namespace) -> dict:
         raise ValueError("keyword must not be empty")
     if args.retriever in {"combined", "keyword"} and not args.keyword:
         raise ValueError("combined and keyword retrievers require explicit --keyword phrases")
+    if args.reranker == "none" and args.ranking == "kev":
+        raise ValueError("ranking=kev requires reranker=kev")
+    if args.include_candidates and args.format != "json":
+        raise ValueError("include-candidates requires --format json")
     return dict(query=args.query, retrieval_queries=args.retrieval_query, keywords=args.keyword,
                 candidate_limit=args.candidate_limit, limit=args.limit, venues=args.venue,
                 year_from=args.year_from, year_to=args.year_to, retriever=args.retriever,
+                reranker=args.reranker, ranking=args.ranking, include_candidates=args.include_candidates,
                 kev_url=args.kev_url, kev_timeout=args.kev_timeout,
                 unrelated_threshold=args.unrelated_threshold)
 
@@ -254,6 +259,12 @@ def parser() -> argparse.ArgumentParser:
     search_discover.add_argument("--year-from", type=int)
     search_discover.add_argument("--year-to", type=int)
     search_discover.add_argument("--retriever", choices=["combined", "zvec", "keyword"], default="combined")
+    search_discover.add_argument("--reranker", choices=["kev", "none"], default="kev",
+                                 help="Local Kev judgment, or explicitly return retrieval candidates only")
+    search_discover.add_argument("--ranking", choices=["balanced", "kev"], default="balanced",
+                                 help="Fuse retrieval and Kev ranks (default), or rank only by Kev confidence")
+    search_discover.add_argument("--include-candidates", action="store_true",
+                                 help="Include every bounded candidate with metadata and stage ranks (JSON only)")
     search_discover.add_argument("--kev-url", default=os.environ.get("LITDB_KEV_URL") or "http://127.0.0.1:8019",
                                  help="Local loopback Kev endpoint (default: LITDB_KEV_URL or port 8019)")
     search_discover.add_argument("--kev-timeout", type=float, default=180,

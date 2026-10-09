@@ -1,6 +1,6 @@
 # Multi-retrieval discovery with local Kev
 
-`search discover` is a two-stage metadata search. It recalls papers through topic-preserving query variants and explicit literal phrases, deduplicates and bounds the candidate set, then asks a local Kev service to classify and rerank those candidates using stored titles and abstracts. It never runs Kev inference over the full catalog. Existing `search query` commands and the browser workbench remain available as the baseline.
+`search discover` is a two-stage metadata search. It recalls papers through topic-preserving query variants and explicit literal phrases, deduplicates and bounds the candidate set, then asks a local Kev service to classify those candidates using stored titles and abstracts. By default it fuses recall and Kev ranks after conservative filtering. It never runs Kev inference over the full catalog. Existing `search query` commands and the browser workbench remain available as the baseline. `--reranker none` explicitly runs recall alone without a Kev service.
 
 ## Prepare the local services
 
@@ -12,7 +12,7 @@ python3 tools/litdb.py search index
 python3 tools/litdb.py search status
 ```
 
-Once that snapshot is ready, `keyword` queries do not require Node or the zvec runtime. This is query-time independence; there is currently no separate keyword-only bootstrap command. Refresh the snapshot through `search index` when the catalog changes.
+Once that snapshot is ready, `keyword` queries do not require Node or the zvec runtime. `--retriever keyword --reranker none` needs neither inference service at query time. This is query-time independence; there is currently no separate keyword-only bootstrap command. Refresh the snapshot through `search index` when the catalog changes.
 
 Kev is optional and runs in its own environment; the catalog CLI remains standard-library Python. The verified [upstream Kev setup](https://github.com/jaredpalmer/kev#run-it-locally) uses Python 3.12 or 3.13, `uv`, and the `serve` extra. In a separate checkout and terminal:
 
@@ -41,13 +41,16 @@ python3 tools/litdb.py search discover "用图神经网络优化芯片布局和�
   --candidate-limit 50 --limit 12 --format json
 ```
 
-`combined` fuses zvec retrieval and catalog literal phrase matches before applying the candidate limit. It uses reciprocal rank fusion with k=60: average the `1 / (60 + rank)` contributions across zvec query variants, then add the keyword route's `1 / (60 + rank)` contribution. `zvec` uses the query variants without requiring phrases. `keyword` uses explicit phrases against the ready lookup snapshot without invoking Node or the zvec runtime during queries; it still uses Kev after recall. Venue and year filters apply to the candidate sources.
+`combined` fuses zvec retrieval and catalog literal phrase matches before applying the candidate limit. It uses reciprocal rank fusion with k=60: average the `1 / (60 + rank)` contributions across zvec query variants, then add the keyword route's `1 / (60 + rank)` contribution. `zvec` uses the query variants without requiring phrases. `keyword` uses explicit phrases against the ready lookup snapshot without invoking Node or the zvec runtime during queries; it uses Kev after recall unless `--reranker none` is specified. Venue and year filters apply to the candidate sources.
 
 | Option | Default and bounds |
 |---|---|
 | `--retrieval-query` | Repeatable additional zvec query; original topic included in combined/zvec modes |
 | `--keyword` | Repeatable nonempty literal phrase; required for `combined` and `keyword` |
 | `--retriever` | `combined`; also `zvec`, `keyword` |
+| `--reranker` | `kev`; `none` explicitly skips the service and relevance judgments |
+| `--ranking` | `balanced`; `kev` restores confidence-only sorting and requires the Kev reranker |
+| `--include-candidates` | Off; include all bounded candidates and stage ranks, requires `--format json` |
 | `--candidate-limit` | 50; integer 1–500, at least `--limit` |
 | `--limit` | 10; integer 1–50 |
 | `--venue` | Repeatable stored venue ID |
@@ -60,7 +63,17 @@ python3 tools/litdb.py search discover "用图神经网络优化芯片布局和�
 
 ## Interpret the output
 
-JSON preserves the existing search result shape and adds discovery timings, counts, and Kev details. Discovery has `mode: "discovery"`; each returned paper has `relevance` with `choice`, `probabilities`, `uncertain`, and `filtered`. `score` is `p(direct) + 0.5 * p(background)`, while `retrieval_score` records fused recall ranking. Neither is a calibrated relevance probability. Each paper's `retrieved_by` records the contributing routes, their query or matched phrases, and ranks. The top-level `filtered` array preserves candidates removed by the unrelated decision. Markdown shows the classification and uncertain state for review.
+JSON preserves the existing search result shape and adds discovery timings, counts, and Kev details. Discovery has `mode: "discovery"`; with Kev enabled, each returned paper has `relevance` with `choice`, `probabilities`, `uncertain`, and `filtered`. Each paper's `retrieved_by` records the contributing routes, their query or matched phrases, and ranks. The top-level `filtered` array preserves the full metadata, abstract, links and decision of each removed candidate, not just its title. Markdown shows the active ranking policy, classification and uncertain state.
+
+`kev_score` is `p(direct) + 0.5 * p(background)`. Default `--ranking balanced` assigns the final `score` as `1/(60+retrieval_rank) + 1/(60+kev_rank)` after filtering; `--ranking kev` assigns `score = kev_score`. Ties use the fused recall score and then the paper ID, deterministically. `retrieval_score` retains the original fused recall score. None of these scores is a calibrated relevance probability or an assessment of the paper's model performance. Filtering does not depend on the ranking policy.
+
+The rationale for balanced ranking is that several directly relevant methods can all have high Kev confidence, but tiny score differences can still move a paper dozens of places. Equal-weight rank fusion gives recall evidence a continuing role without topic-specific weights. It can trade some topic precision for coverage; it does not guarantee either, and confidence-only sorting remains available for comparison. Candidate selection is still the bounded fused recall prefix, so this change cannot recover papers outside that prefix.
+
+Every returned or filtered paper has `ranks`: `zvec` (multi-query zvec rank before the independent keyword route), `keyword` (phrase route rank), `retrieval` (fused rank before filtering), `kev` (among retained candidates), and `final` (among retained candidates). Missing routes and inapplicable ranks are null. `original_rank` is retained as an alias for the selected candidate's recall rank. Filtered records have null `score`, `ranks.kev` and `ranks.final`, but retain their `kev_score` and decision.
+
+Use `--include-candidates --format json` to include the complete bounded `candidates` array in recall order, including filtered papers and those beyond the display limit. This costs no additional inference. For broad reviews, inspect the union of the top final, zvec and Kev ranks in this array; check highly retrieved papers rejected by Kev and organize accepted papers by research direction. Papers beyond the candidate cap have not been judged. Missing abstracts, adjacent research, and benchmark-only papers need separate interpretation rather than automatic inclusion in a list of proposed models.
+
+With `--reranker none`, `score = retrieval_score`, `kev_score` and `ranks.kev` are null, `relevance` is absent, no papers are filtered, and `kev.status` is `disabled`. With Kev enabled, status is `completed` after successful inference or `skipped_empty` when there are no candidates. `counts.selected` records the bounded recall count; `counts.reranked` records actual Kev judgments (zero when disabled), separately from the catalog scope and total recalled count. Errors still fail the command; they are never an automatic fallback.
 
 Kev distributions are model confidence that has not been calibrated for this literature relevance task. A candidate with an abstract is removed only if `unrelated` is the winning choice and its confidence is at least the threshold. Retained low-confidence candidates remain marked `uncertain`; read their stored abstracts before deciding whether they are direct matches or background. A candidate without an abstract is retained as `uncertain` even when Kev strongly selects `unrelated`, because its evidence is limited to the title. Confidence does not prove topic fit.
 
@@ -72,3 +85,40 @@ If Kev cannot be reached or returns invalid data, the CLI reports an error. Do n
 python3 tools/litdb.py search query "graph neural network chip placement congestion" \
   --venue dac --venue iccad --year-from 2020 --limit 12 --format json
 ```
+
+Or explicitly rerun the same discovery command with `--reranker none` to keep the multi-query/phrase recall while reporting that Kev was skipped.
+
+## Reproducible ablation and reports
+
+Keep the topic, bilingual variants, year/venue scope and candidate cap fixed. From the skill root, the following Bash example writes a new directory under the configured database home's `search/` directory without replacing previous reports:
+
+```bash
+db_home="${LITDB_HOME:-$PWD/data/literature-db}"
+mkdir -p "$db_home/search/evaluations"
+run_dir=$(mktemp -d "$db_home/search/evaluations/discovery-comparison-XXXXXX")
+topic='小分子生成、设计与优化的新模型；纯蛋白质生成、仅构象生成和仅评测基准另列为相邻方向。'
+common=("$topic" --home "$db_home"
+  --retrieval-query 'New models for small-molecule generation, design and optimization; protein-only generation, conformation-only methods and benchmarks are adjacent work.'
+  --year-from 2025 --year-to 2026 --candidate-limit 100 --limit 20
+  --include-candidates --format json)
+phrases=(--keyword 'molecular generation' --keyword 'molecule generation'
+  --keyword 'molecular design' --keyword 'molecular optimization'
+  --keyword 'ligand generation' --keyword 'de novo drug design')
+python3 tools/litdb.py search status --home "$db_home" > "$run_dir/index-status.json"
+python3 tools/litdb.py search discover "${common[@]}" \
+  --retriever zvec --reranker none > "$run_dir/baseline.json"
+python3 tools/litdb.py search discover "${common[@]}" "${phrases[@]}" \
+  --reranker none > "$run_dir/keywords.json"
+python3 tools/litdb.py search discover "${common[@]}" "${phrases[@]}" \
+  --kev-timeout 240 > "$run_dir/balanced.json"
+```
+
+Check each command's exit status and error JSON before interpreting its output. For a confidence-only comparison of exactly the same decisions, sort retained `candidates` by `ranks.kev`; a fresh `--ranking kev` run would execute new inference. Reordering saved scores is an offline replay, not a speed measurement. Reconstruct recall order with `ranks.retrieval`; the independent baseline still needs its own recall run because candidate selection can differ after adding keywords.
+
+Report the following without conflating them:
+
+- Catalog coverage and date range; this is not a count of all relevant world literature.
+- Unique recalled, selected, judged, filtered and returned counts. A new route's extra candidates do not establish global recall.
+- Title/abstract review rules, reviewed set, direct and adjacent counts. Agent review is not independent human ground truth, and metadata review is not PDF reading.
+- End-to-end and per-stage live timings, model/runtime, candidate cap, warm/cold conditions, and cache hit counts when available. A single observation is not a latency percentile or stable throughput benchmark. Unknown cache conditions must be reported as unknown.
+- Full-catalog inference, bounded candidate inference, saved-score replay and extrapolated duration as separate evidence types. Preserve old experiments and actual stored article/PDF links.

@@ -10,7 +10,7 @@
 
 ## 安装
 
-目录 CLI 需要 Python 3.10+，zvec 检索与工作台还需要 Node.js 22+、npm 和 Git。当前支持 macOS/Linux；搜索服务使用 POSIX 文件锁，Windows 原生环境暂不支持。目录 CLI 的 Python 运行时使用标准库。可选的 Kev 模型服务有独立的 Python/模型依赖，应在另一个环境安装；见[多路召回与 Kev 配置](references/multi-retrieval.md)。所有 `discover` 模式都需要先由 `search index` 生成就绪的派生查询快照（`papers.sqlite` 和 `state.json`）；快照就绪后，`--retriever keyword` 查询阶段无需 Node/zvec 运行时，但仍需本地 Kev 服务。目前没有独立的 keyword-only 初始化命令。
+目录 CLI 需要 Python 3.10+，zvec 检索与工作台还需要 Node.js 22+、npm 和 Git。当前支持 macOS/Linux；搜索服务使用 POSIX 文件锁，Windows 原生环境暂不支持。目录 CLI 的 Python 运行时使用标准库。可选的 Kev 模型服务有独立的 Python/模型依赖，应在另一个环境安装；见[多路召回与 Kev 配置](references/multi-retrieval.md)。所有 `discover` 模式都需要先由 `search index` 生成就绪的派生查询快照（`papers.sqlite` 和 `state.json`）；快照就绪后，`--retriever keyword` 查询阶段无需 Node/zvec 运行时，配合 `--reranker none` 也无需 Kev 服务。目前没有独立的 keyword-only 初始化命令。
 
 将仓库克隆为 Codex 的一个 skill：
 
@@ -57,7 +57,13 @@ python3 tools/litdb.py search status
 python3 tools/litdb.py search stop
 ```
 
-`discover --retriever` 可选 `combined`（默认）、`zvec`、`keyword`；`combined` 与 `keyword` 必须给出非空的 `--keyword` 字面词组。词组按规范化后的连续 token 匹配，多个词组之间是 OR；助手应在位置参数主题中保留必要约束，供 Kev 判断。`zvec` 和 `combined` 模式会以原主题参与召回，`--retrieval-query` 可重复添加保持主题范围的表达；`keyword` 模式仅以显式词组召回，原主题用于 Kev 判定。最多向 Kev 提交 `--candidate-limit` 篇去重候选（默认 50，范围 1–500），最多输出 `--limit` 篇（默认 10，范围 1–50）；候选数上限必须至少等于输出数上限。召回使用 RRF（k=60），平均各 zvec 查询的排名贡献，再加上关键词路的排名贡献；重排分数为 `p(direct) + 0.5 × p(background)`。JSON 的 `retrieved_by` 保留召回来源，`filtered` 数组保留被筛除的候选。Kev 只处理候选的已存储标题与摘要，没有对全库逐篇推理。`--kev-timeout`（默认 180 秒）是包括兼容回退在内的整个重排阶段时限。
+`discover --retriever` 可选 `combined`（默认）、`zvec`、`keyword`；`combined` 与 `keyword` 必须给出非空的 `--keyword` 字面词组。词组按规范化后的连续 token 匹配，多个词组之间是 OR；助手应在位置参数主题中保留必要约束，供 Kev 判断。`zvec` 和 `combined` 模式会以原主题参与召回，`--retrieval-query` 可重复添加保持主题范围的表达；`keyword` 模式仅以显式词组召回，原主题用于 Kev 判定。候选数上限 `--candidate-limit` 默认 50（1–500），必须至少等于输出数上限 `--limit`（默认 10，1–50）。召回使用 RRF（k=60），平均各 zvec 查询的排名贡献，再加上关键词路的排名贡献。Kev 只处理这些去重候选的已存储标题与摘要，没有对全库逐篇推理。`--kev-timeout`（默认 180 秒）是包括兼容回退在内的整个重排阶段时限。
+
+默认 `--ranking balanced` 用 `1/(60+召回名次) + 1/(60+Kev名次)` 融合两次排序，缓解细小置信度差异压低相关论文的问题。`--ranking kev` 保留原纯 Kev 排序：`p(direct) + 0.5 × p(background)`。JSON 中 `score` 为当前排序分数，`kev_score` 单独保留 Kev 分数，`retrieval_score` 保留召回分数。融合不保证覆盖每个方向或提高准确率；综述应复核候选并按方法方向分组。
+
+`--include-candidates --format json` 输出所有有限候选（最多 500 篇）的完整元数据、判定和阶段排名 `ranks`，包括超过展示条数的候选；`filtered` 也保留完整摘要和链接，便于复核误筛。`ranks` 包含独立关键词路加入前的 `zvec` 名次、`keyword` 名次、合并后的 `retrieval` 名次、保留候选中的 `kev` 名次及 `final` 名次；不适用时为 null。`retrieved_by` 记录各路命中依据。默认简短输出仍只返回 `--limit` 篇及过滤记录。
+
+显式使用 `--reranker none` 可关闭 Kev，只返回未判定的召回候选且不连接模型服务。可据此比较 `zvec + none`、`combined + none`、`combined + kev` 三组；不要把关闭或失败的 Kev 阶段描述为成功筛选。可复现命令和报告要求见[多路召回指南](references/multi-retrieval.md)。
 
 Kev 的选择分布是尚未针对文献相关性校准的模型置信度，不能视为相关性事实。有摘要的候选仅当 `unrelated` 胜出且达到 `--unrelated-threshold`（默认 0.60，范围 0.5–1）才移除；保留的低置信度候选标记 `uncertain`，需读摘要判断。缺少摘要的候选即使被强烈判为 `unrelated` 也保留并标为 `uncertain`。空结果表示本次有限候选没有被接受，不代表全库没有相关论文。所有结果仍仅基于元数据，不能声称已经阅读全文。
 

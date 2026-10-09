@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 import test_search as fixtures
-from litdb.discovery import discover, validate_options
+from litdb.discovery import discover, rank_retained, validate_options
 from litdb.search import SearchError, export_catalog, markdown_results, search_home
 
 
@@ -55,12 +55,76 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual([p['title'] for p in result['results']],['Direct','Background','Uncertain'])
         self.assertTrue(result['results'][-1]['relevance']['uncertain'])
         self.assertEqual(result['filtered'][0]['title'],'Reject')
+        self.assertEqual(result['filtered'][0]['abstract'],'graph words but different task')
+        self.assertIsNone(result['filtered'][0]['ranks']['final'])
+        self.assertIsNone(result['filtered'][0]['score'])
         self.assertEqual(result['counts']['retrieved_unique'],4)
         self.assertEqual(result['counts']['reranked'],4)
         self.assertEqual(len(result['results'][0]['retrieved_by']),3)
         self.assertEqual(len(bridge.requests),2)
         self.assertEqual(self.paths.catalog.read_bytes(),before)
         self.assertIn('待核验',markdown_results(result))
+        self.assertEqual(result['kev']['status'],'completed')
+        self.assertEqual(result['ranking']['policy'],'balanced')
+        self.assertNotIn('candidates',result)
+
+    def test_balanced_ranking_limits_confidence_only_displacement(self):
+        # All twenty candidates are directly relevant. Small confidence gaps
+        # alone should not bury the first recall result beneath all the others.
+        papers=[dict(id=str(i),retrieval_score=1/(60+i),kev_score=.90+i/1000,
+                     ranks=dict(retrieval=i)) for i in range(1,21)]
+        original=rank_retained(papers,'kev')
+        self.assertEqual(original[-1]['id'],'1')
+        self.assertEqual(original[0]['score'],original[0]['kev_score'])
+        balanced=rank_retained(papers)
+        self.assertEqual(balanced[0]['id'],'1')
+        self.assertEqual(balanced[0]['ranks']['kev'],20)
+        self.assertAlmostEqual(balanced[0]['score'],1/61+1/80)
+        self.assertEqual([p['ranks']['final'] for p in balanced],list(range(1,21)))
+
+    def test_candidate_audit_includes_filtered_and_beyond_display_limit(self):
+        papers=self.seed([('Direct','graph generation'),('Other','graph generation'),
+                          ('Reject','graph unrelated')])
+        bridge=fixtures.FakeBridge([self.fixture.hit(path) for _,path in papers])
+        result=discover(self.paths,dict(query='graph',retriever='zvec',limit=1,candidate_limit=3,
+                        include_candidates=True,ranking='kev'),bridge,
+                        FakeKev({'Reject':[.01,.01,.98]}))
+        self.assertEqual(len(result['results']),1)
+        self.assertEqual(len(result['candidates']),3)
+        self.assertEqual(result['counts']['selected'],3)
+        self.assertEqual(result['counts']['retained'],2)
+        self.assertEqual([p['ranks']['retrieval'] for p in result['candidates']],[1,2,3])
+        self.assertTrue(any(p['ranks']['final']==2 for p in result['candidates']))
+        rejected=next(p for p in result['candidates'] if p['title']=='Reject')
+        self.assertEqual(rejected,result['filtered'][0])
+        self.assertTrue(rejected['relevance']['filtered'])
+        for paper in result['candidates']:
+            self.assertEqual(paper['ranks']['zvec'],paper['ranks']['retrieval'])
+            self.assertIsNone(paper['ranks']['keyword'])
+
+    def test_explicit_no_kev_never_creates_client_or_infers(self):
+        self.seed([('Graph','graph generation'),('Graph title only',None)])
+        kev=FakeKev()
+        with patch('litdb.discovery.KevClient',side_effect=AssertionError('No Kev connection')):
+            options=dict(query='graph',keywords=['graph'],retriever='keyword',reranker='none',
+                         kev_url='invalid unused endpoint',include_candidates=True)
+            result=discover(self.paths,options)
+            discover(self.paths,options,client=kev)
+        self.assertEqual(kev.calls,[])
+        self.assertEqual(result['kev']['status'],'disabled')
+        self.assertEqual(result['timings']['kev_ms'],0)
+        self.assertEqual(result['counts']['reranked'],0)
+        self.assertEqual(result['counts']['filtered'],0)
+        self.assertEqual(result['counts']['selected'],2)
+        self.assertEqual(result['ranking']['policy'],'retrieval')
+        for paper in result['candidates']:
+            self.assertNotIn('relevance',paper)
+            self.assertEqual(paper['score'],paper['retrieval_score'])
+            self.assertIsNone(paper['kev_score'])
+            self.assertIsNone(paper['ranks']['kev'])
+            self.assertIsNone(paper['ranks']['zvec'])
+            self.assertIsNotNone(paper['ranks']['keyword'])
+        self.assertIn('未使用 Kev',markdown_results(result))
 
     def test_candidate_budget_applies_before_inference(self):
         papers=self.seed([(f'Graph {i}','graph traffic') for i in range(8)])
@@ -116,7 +180,9 @@ class DiscoveryTests(unittest.TestCase):
                          {'candidate_limit':1,'limit':2},{'unrelated_threshold':float('nan')},
                          {'unrelated_threshold':.4},{'retrieval_queries':['']},
                          {'retrieval_queries':['x']*6},{'keywords':['a\x00b']},
-                         {'retriever':'remote'},{'keywords':'graph'}):
+                         {'retriever':'remote'},{'keywords':'graph'},
+                         {'reranker':'remote'},{'ranking':'probability'},
+                         {'reranker':'none','ranking':'kev'},{'include_candidates':'yes'}):
             with self.subTest(override=override),self.assertRaises(ValueError):
                 validate_options({**base,**override})
         valid=validate_options(dict(query='graph',retriever='zvec',retrieval_queries=['graph','graphs']))

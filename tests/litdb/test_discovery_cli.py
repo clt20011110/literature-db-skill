@@ -41,6 +41,7 @@ class DiscoveryCLITests(unittest.TestCase):
         self.assertEqual(args.kev_url, "http://127.0.0.1:8019")
         self.assertEqual((args.retriever, args.candidate_limit, args.limit), ("combined", 50, 10))
         self.assertEqual((args.kev_timeout, args.unrelated_threshold, args.format), (180, 0.60, "markdown"))
+        self.assertEqual((args.reranker,args.ranking,args.include_candidates),('kev','balanced',False))
         with patch.dict(os.environ, {"LITDB_KEV_URL": "http://localhost:8020"}):
             self.assertEqual(self.parse("topic").kev_url, "http://localhost:8020")
             self.assertEqual(self.parse("topic", "--kev-url", "http://127.0.0.1:8030").kev_url,
@@ -55,7 +56,7 @@ class DiscoveryCLITests(unittest.TestCase):
             "--candidate-limit", "80", "--limit", "12", "--venue", "dac", "--venue", "iccad",
             "--year-from", "2020", "--year-to", "2026", "--retriever", "combined",
             "--kev-url", "http://localhost:8019", "--kev-timeout", "240",
-            "--unrelated-threshold", "0.7", "--format", "json"
+            "--unrelated-threshold", "0.7", "--ranking", "kev", "--include-candidates", "--format", "json"
         ], result=result)
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(output), result)
@@ -67,6 +68,7 @@ class DiscoveryCLITests(unittest.TestCase):
                                      keywords=["technical phrase", "ACRONYM"], candidate_limit=80, limit=12,
                                      venues=["dac", "iccad"], year_from=2020, year_to=2026,
                                      retriever="combined", kev_url="http://localhost:8019", kev_timeout=240.0,
+                                     reranker="kev", ranking="kev", include_candidates=True,
                                      unrelated_threshold=0.7))
 
     def test_keyword_does_not_require_node_runtime(self):
@@ -102,6 +104,8 @@ class DiscoveryCLITests(unittest.TestCase):
             ["topic", "--keyword", "phrase", "--unrelated-threshold", "1.01"],
             ["topic", "--keyword", "phrase", "--unrelated-threshold", "nan"],
             ["topic", "--keyword", "phrase", "--year-from", "2026", "--year-to", "2020"],
+            ["topic", "--keyword", "phrase", "--include-candidates"],
+            ["topic", "--keyword", "phrase", "--reranker", "none", "--ranking", "kev"],
         ]
         for arguments in invalid_cases:
             with self.subTest(arguments=arguments):
@@ -126,6 +130,14 @@ class DiscoveryCLITests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(output.strip(), "candidate interpretation")
         render.assert_called_once_with(discover.return_value)
+
+    def test_retrieval_only_ablation_options(self):
+        code,_,discover,_=self.run_discover([
+            'topic','--retriever','zvec','--reranker','none','--include-candidates','--format','json'])
+        self.assertEqual(code,0)
+        options=discover.call_args.args[1]
+        self.assertEqual(options['reranker'],'none')
+        self.assertTrue(options['include_candidates'])
 
     def test_existing_query_mapping_stays_unchanged(self):
         args = cli.parser().parse_args(["search", "query", "topic", "--mode", "keyword", "--format", "json"])

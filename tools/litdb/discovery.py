@@ -28,6 +28,14 @@ def validate_options(options):
     keywords=_strings(options.get('keywords',[]),'keywords',count=32,length=500,total=6000)
     retriever=options.get('retriever','combined')
     if retriever not in {'combined','zvec','keyword'}:raise ValueError('Unknown discovery retriever.')
+    reranker=options.get('reranker','kev')
+    if reranker not in {'kev','none'}:raise ValueError('Unknown discovery reranker.')
+    ranking=options.get('ranking','balanced')
+    if ranking not in {'balanced','kev'}:raise ValueError('Unknown discovery ranking.')
+    if reranker=='none' and ranking=='kev':
+        raise ValueError('ranking=kev requires reranker=kev.')
+    include_candidates=options.get('include_candidates',False)
+    if not isinstance(include_candidates,bool):raise ValueError('include_candidates must be a boolean.')
     if retriever!='zvec' and not keywords:
         raise ValueError('Provide --keyword literal phrases for combined/keyword retrieval; choose technical terms and synonyms for the topic.')
     limit=options.get('candidate_limit',50)
@@ -36,17 +44,37 @@ def validate_options(options):
     threshold=options.get('unrelated_threshold',0.6)
     if isinstance(threshold,bool) or not isinstance(threshold,(int,float)) or not math.isfinite(threshold) or not 0.5<=threshold<=1:
         raise ValueError('unrelated_threshold must be between 0.5 and 1.')
-    return dict(**base,retriever=retriever,keywords=keywords,candidate_limit=limit,
+    return dict(**base,retriever=retriever,reranker=reranker,ranking=ranking,
+                include_candidates=include_candidates,keywords=keywords,candidate_limit=limit,
                 retrieval_queries=list(dict.fromkeys([base['query'],*variants])),
                 unrelated_threshold=float(threshold),
                 kev_url=options.get('kev_url') or os.environ.get('LITDB_KEV_URL','http://127.0.0.1:8019'),
                 kev_timeout=options.get('kev_timeout',180))
 
 
+def rank_retained(papers, ranking='balanced'):
+    """Rank accepted candidates without treating small confidence gaps as truth.
+
+    The recall rank refers to the complete fused pool before filtering. Kev rank
+    refers to retained candidates only. Equal-weight RRF is intentionally fixed,
+    rather than fitted to a particular research topic or model calibration.
+    """
+    if ranking not in {'balanced','kev'}:raise ValueError('Unknown discovery ranking.')
+    ordered=sorted(papers,key=lambda p:(-p['kev_score'],-p['retrieval_score'],p['id']))
+    for rank,paper in enumerate(ordered,1):
+        paper['ranks']['kev']=rank
+        paper['score']=(1/(60+paper['ranks']['retrieval'])+1/(60+rank)
+                        if ranking=='balanced' else paper['kev_score'])
+    ordered.sort(key=lambda p:(-p['score'],-p['retrieval_score'],p['id']))
+    for rank,paper in enumerate(ordered,1):paper['ranks']['final']=rank
+    return ordered
+
+
 def discover(paths, options, bridge=None, client=None):
     options=validate_options(options)
     # Validate the endpoint before any potentially expensive index work.
-    client=client or KevClient(options['kev_url'],timeout=options['kev_timeout'])
+    if options['reranker']=='kev':
+        client=client or KevClient(options['kev_url'],timeout=options['kev_timeout'])
     started=time.perf_counter();home=search_home(paths);timings={};warnings=[]
     candidates={};route_counts={};eligible=0
     own_bridge=bridge is None
@@ -104,50 +132,81 @@ def discover(paths, options, bridge=None, client=None):
     # Average query variants within zvec so query expansion does not give that
     # retriever more total weight than the independent keyword route.
     recalled=sorted(candidates.values(),key=lambda p:(-p['retrieval_score'],p['id']))
+    zvec_scores={p['id']:sum(1/(60+r['rank']) for r in p['retrieved_by'] if r['route']=='zvec')
+                 for p in recalled if any(r['route']=='zvec' for r in p['retrieved_by'])}
+    zvec_ranks={identity:rank for rank,identity in enumerate(
+        sorted(zvec_scores,key=lambda identity:(-zvec_scores[identity],identity)),1)}
+    for rank,paper in enumerate(recalled,1):
+        paper['ranks']=dict(retrieval=rank,zvec=zvec_ranks.get(paper['id']),
+            keyword=next((r['rank'] for r in paper['retrieved_by'] if r['route']=='keyword'),None),
+            kev=None,final=None)
     selected=recalled[:options['candidate_limit']]
     timings['retrieval_ms']=round((time.perf_counter()-started)*1000,2)
     kept=[];filtered=[];uncertain=0
-    kev=dict(model=None,endpoint=None)
-    if selected:
+    kev=dict(status='skipped_empty',model=None,endpoint=None)
+    for rank,paper in enumerate(selected,1):
+        has_abstract=bool((paper.get('abstract') or '').strip())
+        paper.update(original_rank=rank,kev_score=None,
+            evidence_scope='title_and_abstract' if has_abstract else 'title_only',
+            matched_editions=matching_editions(paper,options))
+        if not has_abstract:paper['abstract']=None
+        paper['evidence'],paper['matched_terms']=evidence_excerpt(paper,' '.join([*options['retrieval_queries'],*options['keywords']]))
+    if selected and options['reranker']=='kev':
         t=time.perf_counter()
         kev=client.rerank(options['query'],selected)
+        kev['status']='completed'
         timings['kev_ms']=round((time.perf_counter()-t)*1000,2)
         rows=kev['results']
         if len(rows)!=len(selected) or [r['paper_id'] for r in rows]!=[p['id'] for p in selected]:
             raise SearchError('Kev response does not match the candidate papers.')
-        for rank,(paper,decision) in enumerate(zip(selected,rows),1):
+        for paper,decision in zip(selected,rows):
             probabilities=decision['probabilities']
             confidence=sorted(probabilities.values(),reverse=True)
             has_abstract=bool((paper.get('abstract') or '').strip())
             needs_review=confidence[0]<0.6 or confidence[0]-confidence[1]<0.1 or not has_abstract
             removed=has_abstract and decision['choice']=='unrelated' and probabilities['unrelated']>=options['unrelated_threshold']
-            paper.update(original_rank=rank,score=probabilities['direct']+0.5*probabilities['background'],
+            paper.update(score=None,kev_score=probabilities['direct']+0.5*probabilities['background'],
                 relevance=dict(choice=decision['choice'],probabilities=probabilities,
-                               uncertain=needs_review,filtered=removed),
-                evidence_scope='title_and_abstract' if has_abstract else 'title_only',
-                matched_editions=matching_editions(paper,options))
-            if not has_abstract:paper['abstract']=None
-            paper['evidence'],paper['matched_terms']=evidence_excerpt(paper,' '.join([*options['retrieval_queries'],*options['keywords']]))
+                               uncertain=needs_review,filtered=removed))
             if removed:
-                filtered.append(dict(id=paper['id'],title=paper['title'],relevance=paper['relevance']))
+                filtered.append(paper)
             else:
                 kept.append(paper)
                 uncertain+=int(needs_review)
-        kept.sort(key=lambda p:(-p['score'],-p['retrieval_score'],p['id']))
+        kept=rank_retained(kept,options['ranking'])
     else:
         timings['kev_ms']=0
-    warnings.append('Kev 仅判断本次召回的标题和摘要；模型分布未经本领域校准，待核验结果请阅读摘要确认。')
-    if any(not (p.get('abstract') or '').strip() for p in selected):warnings.append('部分候选缺少摘要，判断仅依据标题，已标为待核验。')
-    counts=dict(by_route=route_counts,retrieved_unique=len(recalled),reranked=len(selected),
+        if options['reranker']=='none':
+            kev['status']='disabled'
+            kept=selected
+            for rank,paper in enumerate(kept,1):
+                paper['score']=paper['retrieval_score']
+                paper['ranks']['final']=rank
+    if options['reranker']=='kev':
+        warnings.append('Kev 仅判断本次召回的标题和摘要；模型分布未经本领域校准，待核验结果请阅读摘要确认。')
+        if options['ranking']=='balanced':
+            warnings.append('排序融合召回与 Kev 排名；不能保证覆盖每个研究方向，综述请复核候选并按方向分组。')
+    else:
+        warnings.append('已显式关闭 Kev；这些结果仅为召回候选，未进行相关性判定或筛除。')
+    if any(not (p.get('abstract') or '').strip() for p in selected):warnings.append('部分候选缺少摘要，仅有标题证据，请人工核验。')
+    counts=dict(by_route=route_counts,retrieved_unique=len(recalled),selected=len(selected),
+                reranked=len(selected) if options['reranker']=='kev' else 0,
                 candidate_limit=options['candidate_limit'],filtered=len(filtered),retained=len(kept),
                 uncertain_retained=uncertain,returned=min(len(kept),options['limit']))
-    return dict(query=options['query'],results=kept[:options['limit']],filtered=filtered,
+    result=dict(query=options['query'],results=kept[:options['limit']],filtered=filtered,
                 total_candidates=len(recalled),eligible_papers=eligible,counts=counts,
                 timings=timings,elapsed_ms=round((time.perf_counter()-started)*1000,2),
-                mode='discovery',retriever=options['retriever'],retrieval_queries=options['retrieval_queries'],
+                mode='discovery',retriever=options['retriever'],reranker=options['reranker'],
+                retrieval_queries=options['retrieval_queries'],
                 keywords=options['keywords'],warnings=warnings,scope='titles_and_abstracts',
                 model=state.get('model'),index_updated_at=state.get('updated_at'),
                 kev={k:v for k,v in kev.items() if k!='results'},
-                ranking=dict(fusion='RRF k=60; mean of zvec query variants + keyword rank',
-                             score='p(direct) + 0.5 * p(background)',
+                ranking=dict(policy=options['ranking'] if options['reranker']=='kev' else 'retrieval',
+                             fusion='RRF k=60; mean of zvec query variants + keyword rank',
+                             score=('retrieval_score' if options['reranker']=='none' else
+                                    '1/(60+retrieval_rank) + 1/(60+kev_rank)' if options['ranking']=='balanced' else
+                                    'p(direct) + 0.5 * p(background)'),
+                             kev_score='p(direct) + 0.5 * p(background)',
                              unrelated_threshold=options['unrelated_threshold']))
+    if options['include_candidates']:result['candidates']=selected
+    return result
